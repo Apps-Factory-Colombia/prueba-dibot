@@ -4,6 +4,11 @@ import { extname, resolve, sep } from 'node:path'
 
 export type ApiHandler = (request: Request) => Promise<Response> | Response
 
+type PreviewHandlerRegistry = Map<string, ApiHandler>
+type PreviewGlobal = typeof globalThis & {
+  __dibotPreviewApiHandlers?: PreviewHandlerRegistry
+}
+
 const contentTypes: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
   '.html': 'text/html; charset=utf-8',
@@ -72,6 +77,15 @@ async function serveStatic(pathname: string, response: ServerResponse) {
 }
 
 export function startApiServer(handler: ApiHandler) {
+  if (process.env.DIBOT_PREVIEW_BUNDLE === '1') {
+    const key = process.env.DIBOT_PREVIEW_HANDLER_KEY || 'default'
+    const global = globalThis as PreviewGlobal
+    const handlers = global.__dibotPreviewApiHandlers || new Map<string, ApiHandler>()
+    handlers.set(key, handler)
+    global.__dibotPreviewApiHandlers = handlers
+    return { close: () => undefined }
+  }
+
   const port = Number(process.env.PORT ?? 3001)
   const host = process.env.HOST ?? '127.0.0.1'
   const server = createServer(async (nodeRequest, nodeResponse) => {

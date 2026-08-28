@@ -13,6 +13,7 @@ const entries: BundleEntry[] = [
 
 const metafile: Metafile = { inputs: {}, outputs: {} }
 const requireApi = process.env.DIBOT_REQUIRE_PERSISTENCE === '1'
+const previewOnly = process.env.DIBOT_PREVIEW_ONLY === '1'
 
 if (entries.length === 0) {
   if (requireApi) throw new Error('[esbuild] La app completa requiere api/index.ts, pero no existe.')
@@ -26,7 +27,7 @@ if (entries.length === 0) {
       format: 'esm',
       platform: 'node',
       target: 'node20',
-      packages: 'external',
+      packages: previewOnly ? 'bundle' : 'external',
       minify: true,
       sourcemap: 'external',
       metafile: true,
