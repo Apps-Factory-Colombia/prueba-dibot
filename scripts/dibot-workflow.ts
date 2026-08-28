@@ -316,7 +316,17 @@ async function runInitialAgent(input: WorkflowInput) {
 async function verifyFunctionalApp(input: WorkflowInput) {
   await runCapture('bun', ['run', 'dibot:verify:fast'], root)
   if (process.env.DIBOT_PREVIEW_ONLY === '1') {
-    console.log('[preview] Se omiten las verificaciones de release; el orquestador generará y validará dist después.')
+    // Preview no deploys a container, but its server bundle still reads the
+    // app's Turso database at request time. Keep the fast static delivery
+    // path while synchronizing and validating the database before the dist
+    // is uploaded; otherwise a fresh preview can render and still return 500
+    // from every real endpoint because the database is empty.
+    console.log('[preview] Sincronizando y validando Turso antes de publicar dist.')
+    if (input.mode === 'create' || await schemaChanged()) await runCapture('bun', ['run', 'db:push'], root)
+    await runCapture('bun', ['run', 'db:seed'], root)
+    if (input.mode === 'update') await runCapture('bun', ['run', 'db:snapshot:verify'], root)
+    await runCapture('bun', ['run', 'db:verify'], root)
+    await runCapture('bun', ['run', 'test:functional'], root)
     return
   }
   if (input.mode === 'create' || await schemaChanged()) await runCapture('bun', ['run', 'db:push'], root)
