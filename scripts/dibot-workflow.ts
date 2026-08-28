@@ -266,12 +266,19 @@ async function prepareDatabase(input: WorkflowInput) {
 }
 
 function completeAppContract(input: WorkflowInput) {
+  const previewOnly = process.env.DIBOT_PREVIEW_ONLY === '1'
+  const visualResearchRule = previewOnly
+    ? '- PREVIEW MODE: prioriza una entrega funcional y rápida. No hagas búsquedas externas ni uses Mobbin; trabaja únicamente con los archivos del repositorio actual.'
+    : '- En CREATE MODE ejecuta exactamente una búsqueda visual de Mobbin con mobbin_search_screens, selecciona hasta seis referencias relevantes, analiza su lenguaje visual una sola vez y guarda referencias/README en references/mobbin cuando sea posible. No copies pantallas, marcas ni assets.'
+  const updateVisualRule = previewOnly
+    ? '- En PREVIEW MODE conserva el lenguaje visual existente y no hagas búsquedas externas.'
+    : '- En UPDATE MODE lee siempre references/mobbin/README.md y las referencias visuales antes de modificar la interfaz. Mantén el lenguaje visual existente. Si agregas pantallas o cambias la dirección visual, ejecuta una búsqueda Mobbin complementaria una sola vez; si el cambio es solo de datos/API, no hagas una búsqueda nueva.'
   return `
 CONTRATO OBLIGATORIO DEL WORKFLOW
 - Esta es una sesión única de dibot-fast. Entiende el prompt natural, crea internamente un brief funcional/visual compacto y programa de inmediato; no llames a prompt-builder ni repitas el brief como una segunda sesión.
 - Idioma predeterminado obligatorio: toda la app debe quedar en español, incluyendo UI, navegación, botones, formularios, placeholders, mensajes, errores, estados, datos de seed y contenido visible. Solo cambia de idioma si el prompt del usuario lo solicita explícitamente. Conserva nombres propios, marcas y el nombre exacto de la app.
-- En CREATE MODE ejecuta exactamente una búsqueda visual de Mobbin con mobbin_search_screens, selecciona hasta seis referencias relevantes, analiza su lenguaje visual una sola vez y guarda referencias/README en references/mobbin cuando sea posible. No copies pantallas, marcas ni assets.
-- En UPDATE MODE lee siempre references/mobbin/README.md y las referencias visuales antes de modificar la interfaz. Mantén el lenguaje visual existente. Si agregas pantallas o cambias la dirección visual, ejecuta una búsqueda Mobbin complementaria una sola vez; si el cambio es solo de datos/API, no hagas una búsqueda nueva.
+${visualResearchRule}
+${updateVisualRule}
 - El producto final debe ser distinto para este pedido: decide una dirección visual original basada en Mobbin, no entregues un dashboard genérico ni una pantalla vacía.
 - El nombre exacto es "${input.appName}". Debe aparecer en la UI principal, en <title> y en /api/health como appName.
 - La persistencia no es opcional. La base Turso ya fue provisionada por el workflow: no ejecutes db:create. Define tablas reales en api/db/schema.ts, crea api/db/seed.ts idempotente y llena todas las tablas con datos iniciales útiles. En update, el seed debe usar conflictos sin sobrescribir filas existentes ni campos como updated_at.
@@ -308,6 +315,10 @@ async function runInitialAgent(input: WorkflowInput) {
 
 async function verifyFunctionalApp(input: WorkflowInput) {
   await runCapture('bun', ['run', 'dibot:verify:fast'], root)
+  if (process.env.DIBOT_PREVIEW_ONLY === '1') {
+    console.log('[preview] Se omiten las verificaciones de release; el orquestador generará y validará dist después.')
+    return
+  }
   if (input.mode === 'create' || await schemaChanged()) await runCapture('bun', ['run', 'db:push'], root)
   await runCapture('bun', ['run', 'db:seed'], root)
   if (input.mode === 'update') await runCapture('bun', ['run', 'db:snapshot:verify'], root)
