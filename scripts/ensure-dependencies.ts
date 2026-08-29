@@ -26,8 +26,21 @@ const requiredBinaries = [
 const requiredRuntimePackages = [
   join(root, 'node_modules', '@aws-sdk', 'client-s3', 'package.json'),
   join(root, 'node_modules', '@aws-sdk', 's3-request-presigner', 'package.json'),
+  join(root, 'node_modules', '@aws-sdk', 'checksums', 'flexible-checksums.js'),
   join(root, 'node_modules', 'sharp', 'package.json'),
 ]
+
+async function runtimeDependenciesReady() {
+  try {
+    await import('@aws-sdk/client-s3')
+    await import('@aws-sdk/s3-request-presigner')
+    await import('sharp')
+    return true
+  } catch (error) {
+    console.warn(`[deps] El árbol de runtime no puede cargarse todavía: ${error instanceof Error ? error.message : String(error)}`)
+    return false
+  }
+}
 
 async function dependencyFingerprint() {
   const [manifest, lockfile] = await Promise.all([
@@ -54,7 +67,8 @@ const previousFingerprint = await readFile(join(root, '.dibot-runtime', 'depende
 // must not turn every request into a fresh network install. The required
 // runtime/build markers are the readiness contract; the fingerprint is only
 // refreshed so the next workspace can reuse the same snapshot.
-if (missing.length === 0) {
+const runtimeReady = missing.length === 0 && await runtimeDependenciesReady()
+if (runtimeReady) {
   await rememberFingerprint(fingerprint)
   console.log(`[deps] Dependencias listas desde el snapshot; bun install omitido (fingerprint ${fingerprint.slice(0, 12)}).`)
   process.exit(0)
@@ -84,8 +98,9 @@ const installTimeoutMs = Number.isFinite(configuredTimeout)
   ? Math.min(Math.max(configuredTimeout, 30_000), 600_000)
   : 180_000
 
-function dependenciesReady() {
-  return [...requiredBinaries, ...requiredRuntimePackages].every((file) => existsSync(file))
+async function dependenciesReady() {
+  if (![...requiredBinaries, ...requiredRuntimePackages].every((file) => existsSync(file))) return false
+  return runtimeDependenciesReady()
 }
 
 async function removeIncompleteInstall() {
@@ -166,7 +181,7 @@ async function installDependencies(): Promise<number> {
     if (attempt > 0) await removeIncompleteInstall()
     const current = attempts[attempt]
     const code = await runInstall(current.args, current.description)
-    if (code === 0 && dependenciesReady()) return 0
+    if (code === 0 && await dependenciesReady()) return 0
 
     if (attempt === attempts.length - 1) {
       console.error('[deps] La instalación terminó sin todos los binarios requeridos.')
