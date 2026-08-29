@@ -40,7 +40,15 @@ const secretAccessKey = required('R2_SECRET_ACCESS_KEY')
 const bucket = process.env.R2_BUCKET?.trim() || 'dibot'
 const prefix = storagePrefix()
 const authSessionSecret = process.env.AUTH_SESSION_SECRET?.trim() || randomBytes(32).toString('base64url')
-const client = new S3Client({ region: 'auto', endpoint, credentials: { accessKeyId, secretAccessKey } })
+const client = new S3Client({
+  region: 'auto',
+  endpoint,
+  credentials: { accessKeyId, secretAccessKey },
+  // Cloudflare R2 signs the S3 request itself; optional AWS checksum
+  // headers can make PutObject signatures incompatible with R2.
+  requestChecksumCalculation: 'WHEN_REQUIRED',
+  responseChecksumValidation: 'WHEN_REQUIRED',
+})
 
 await client.send(new HeadBucketCommand({ Bucket: bucket }))
 await client.send(new PutObjectCommand({

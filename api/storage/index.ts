@@ -274,6 +274,9 @@ function s3(): S3Config {
           accessKeyId: required('R2_ACCESS_KEY_ID'),
           secretAccessKey: required('R2_SECRET_ACCESS_KEY'),
         },
+        // Avoid optional checksum headers that can invalidate R2 signatures.
+        requestChecksumCalculation: 'WHEN_REQUIRED',
+        responseChecksumValidation: 'WHEN_REQUIRED',
       }),
       bucket: env('STORAGE_BUCKET') ?? env('R2_BUCKET') ?? 'dibot',
       endpoint,
