@@ -39,7 +39,14 @@ const accessKeyId = required('R2_ACCESS_KEY_ID')
 const secretAccessKey = required('R2_SECRET_ACCESS_KEY')
 const bucket = process.env.R2_BUCKET?.trim() || 'dibot'
 const prefix = storagePrefix()
-const authSessionSecret = process.env.AUTH_SESSION_SECRET?.trim() || randomBytes(32).toString('base64url')
+const configuredAuthSessionSecret = process.env.AUTH_SESSION_SECRET?.trim()
+const agentToken = process.env.DIBOT_AGENT_API_TOKEN?.trim()
+const authSessionSecret = configuredAuthSessionSecret
+  || (agentToken
+    ? createHash('sha256').update(`${agentToken}:${process.env.DIBOT_APP_ID}:dibot-session`).digest('base64url')
+    : process.env.NODE_ENV === 'production'
+      ? (() => { throw new Error('Falta AUTH_SESSION_SECRET y no hay DIBOT_AGENT_API_TOKEN para generarlo de forma segura.') })()
+      : randomBytes(32).toString('base64url'))
 const metadata = {
   ...(process.env.DIBOT_APP_ID?.trim() ? { 'dibot-app-id': process.env.DIBOT_APP_ID.trim() } : {}),
   ...(process.env.DIBOT_APP_NAME?.trim() ? { 'dibot-app-name': process.env.DIBOT_APP_NAME.trim() } : {}),

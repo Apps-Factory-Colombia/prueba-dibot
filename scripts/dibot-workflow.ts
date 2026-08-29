@@ -35,6 +35,17 @@ function required(name: string) {
   return value
 }
 
+function ensureAuthSessionSecret(input: WorkflowInput) {
+  if (process.env.AUTH_SESSION_SECRET?.trim()) return
+  const agentToken = process.env.DIBOT_AGENT_API_TOKEN?.trim()
+  if (!agentToken) {
+    throw new Error('Falta AUTH_SESSION_SECRET y DIBOT_AGENT_API_TOKEN para iniciar sesiones de forma segura.')
+  }
+  process.env.AUTH_SESSION_SECRET = createHash('sha256')
+    .update(`${agentToken}:${input.appId}:dibot-session`)
+    .digest('base64url')
+}
+
 function firstString(value: unknown, keys: string[]): string | undefined {
   if (!value || typeof value !== 'object') return undefined
   const object = value as JsonObject
@@ -386,6 +397,7 @@ async function main() {
     const input = parseInput(process.argv.slice(2))
     process.env.DIBOT_APP_ID = input.appId
     process.env.DIBOT_APP_NAME = input.appName
+    ensureAuthSessionSecret(input)
     const registeredApp = await findRegisteredApp(input)
     const partialCreateRecovery = process.env.DIBOT_PARTIAL_CREATE_RECOVERY === '1'
     if (input.mode === 'create') {
