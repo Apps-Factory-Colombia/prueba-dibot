@@ -40,6 +40,10 @@ const secretAccessKey = required('R2_SECRET_ACCESS_KEY')
 const bucket = process.env.R2_BUCKET?.trim() || 'dibot'
 const prefix = storagePrefix()
 const authSessionSecret = process.env.AUTH_SESSION_SECRET?.trim() || randomBytes(32).toString('base64url')
+const metadata = {
+  ...(process.env.DIBOT_APP_ID?.trim() ? { 'dibot-app-id': process.env.DIBOT_APP_ID.trim() } : {}),
+  ...(process.env.DIBOT_APP_NAME?.trim() ? { 'dibot-app-name': process.env.DIBOT_APP_NAME.trim() } : {}),
+}
 const client = new S3Client({
   region: 'auto',
   endpoint,
@@ -56,7 +60,7 @@ await client.send(new PutObjectCommand({
   Key: `${prefix}/.dibot-storage.json`,
   Body: JSON.stringify({ appId: process.env.DIBOT_APP_ID, appName: process.env.DIBOT_APP_NAME, createdAt: new Date().toISOString() }),
   ContentType: 'application/json',
-  Metadata: { 'dibot-app-id': process.env.DIBOT_APP_ID ?? '', 'dibot-app-name': process.env.DIBOT_APP_NAME ?? '' },
+  ...(Object.keys(metadata).length > 0 ? { Metadata: metadata } : {}),
 }))
 
 const values = {
