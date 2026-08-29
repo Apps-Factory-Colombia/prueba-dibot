@@ -101,6 +101,10 @@ export function startApiServer(handler: ApiHandler) {
         await serveStatic(pathname, nodeResponse)
       }
     } catch (error) {
+      if (error instanceof Response) {
+        await sendWebResponse(nodeResponse, error)
+        return
+      }
       console.error('[api] Request failed:', error instanceof Error ? error.message : String(error))
       await sendWebResponse(nodeResponse, json({ error: 'Internal server error' }, { status: 500 }))
     }

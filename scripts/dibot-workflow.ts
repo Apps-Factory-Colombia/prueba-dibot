@@ -50,7 +50,19 @@ function firstString(value: unknown, keys: string[]): string | undefined {
 }
 
 function redact(value: string) {
-  return ['DIBOT_AGENT_API_TOKEN', 'OPENAI_API_KEY', 'GITHUB_TOKEN', 'TURSO_AUTH_TOKEN', 'TURSO_PLATFORM_API_TOKEN', 'DOKPLOY_API_KEY']
+  return [
+    'DIBOT_AGENT_API_TOKEN',
+    'OPENAI_API_KEY',
+    'GITHUB_TOKEN',
+    'TURSO_AUTH_TOKEN',
+    'TURSO_PLATFORM_API_TOKEN',
+    'DOKPLOY_API_KEY',
+    'R2_TOKEN',
+    'R2_ACCESS_KEY_ID',
+    'R2_SECRET_ACCESS_KEY',
+    'ENDPOINT_S3',
+    'AUTH_SESSION_SECRET',
+  ]
     .reduce((result, name) => {
       const secret = process.env[name]
       return secret ? result.split(secret).join('***REDACTED***') : result
@@ -248,6 +260,7 @@ async function applyAppMetadata(input: WorkflowInput) {
 
   await mkdir(join(root, '.dibot-runtime'), { recursive: true })
   await writeFile(join(root, '.dibot-runtime', 'app.json'), `${JSON.stringify({ userId: input.userId, appId: input.appId, appName: input.appName, mode: input.mode }, null, 2)}\n`, 'utf8')
+  process.env.DIBOT_APP_ID = input.appId
   process.env.DIBOT_APP_NAME = input.appName
 }
 
@@ -263,6 +276,21 @@ async function prepareDatabase(input: WorkflowInput) {
     await run('bun', ['run', 'db:check'], root)
     await run('bun', ['run', 'db:snapshot'], root)
   }
+}
+
+async function prepareStorage(input: WorkflowInput) {
+  // R2 is a shared bucket with an isolated, deterministic namespace per app.
+  // This keeps provisioning fast and prevents one app from reading another
+  // app's files while allowing updates to reuse the same storage.
+  const environment = {
+    DIBOT_APP_ID: input.appId,
+    DIBOT_APP_NAME: input.appName,
+    DIBOT_REQUIRE_STORAGE: '1',
+  }
+  await run('bun', ['run', 'storage:provision'], root, environment)
+  loadEnv({ path: join(root, '.env'), override: true })
+  process.env.DIBOT_APP_ID = input.appId
+  process.env.DIBOT_APP_NAME = input.appName
 }
 
 function completeAppContract(input: WorkflowInput) {
@@ -282,6 +310,10 @@ ${updateVisualRule}
 - El producto final debe ser distinto para este pedido: decide una dirección visual original basada en Mobbin, no entregues un dashboard genérico ni una pantalla vacía.
 - El nombre exacto es "${input.appName}". Debe aparecer en la UI principal, en <title> y en /api/health como appName.
 - La persistencia no es opcional. La base Turso ya fue provisionada por el workflow: no ejecutes db:create. Define tablas reales en api/db/schema.ts, crea api/db/seed.ts idempotente y llena todas las tablas con datos iniciales útiles. En update, el seed debe usar conflictos sin sobrescribir filas existentes ni campos como updated_at.
+- Archivos: usa siempre el contrato server-side de api/storage/index.ts: storage.upload, storage.getUrl, storage.delete y storage.read. La app recibe un namespace R2 por aplicación mediante STORAGE_PREFIX; no inventes otra integración, no guardes archivos en localStorage y no expongas credenciales R2 al navegador. Usa handleStorageRequest para el endpoint y exige requireAuth antes de subir o eliminar archivos. FilePicker permite cámara/galería; valida tipo/tamaño y pide thumbnail cuando la interfaz muestre imágenes.
+- Autenticación: usa getSession, requireAuth, requireRole y getCurrentUser de api/auth. Las sesiones son cookies HttpOnly firmadas con AUTH_SESSION_SECRET; nunca confíes en un role enviado por el cliente. Crea las tablas de usuarios/roles específicas del producto cuando la app las necesite y devuelve 401/403 de forma clara.
+- La app debe sentirse completa: cada acción visible debe tener handler real, estado de carga, error, vacío, éxito y confirmación cuando corresponda. Elimina botones, enlaces, filtros o menús que no tengan implementación funcional.
+- La interfaz siempre es mobile-first: diseña como una app móvil (375–430 px), con navegación y gestos/controles táctiles; no construyas una página web de escritorio adaptada al móvil.
 - Crea api/index.ts usando startApiServer de api/server.ts. Expón /api/health con { ok: true, database: true, appName: "${input.appName}" } después de consultar Turso, además del CRUD real del flujo principal.
 - Crea api/smoke.ts: prueba crear, leer, actualizar y eliminar un registro temporal del dominio principal contra Turso, limpia el registro en finally y falla ante cualquier resultado incorrecto.
 - El frontend debe consumir rutas /api/* con TanStack Query. No guardes registros del dominio en localStorage o mocks; Zustand se limita a estado efímero de UI.
@@ -352,6 +384,8 @@ async function main() {
   let reporter: DibotReporter | undefined
   try {
     const input = parseInput(process.argv.slice(2))
+    process.env.DIBOT_APP_ID = input.appId
+    process.env.DIBOT_APP_NAME = input.appName
     const registeredApp = await findRegisteredApp(input)
     const partialCreateRecovery = process.env.DIBOT_PARTIAL_CREATE_RECOVERY === '1'
     if (input.mode === 'create') {
@@ -368,6 +402,8 @@ async function main() {
     await applyAppMetadata(input)
     await reporter.update(`Preparando Turso para ${input.appName}`)
     await prepareDatabase(input)
+    await reporter.update(`Preparando almacenamiento seguro para ${input.appName}`)
+    await prepareStorage(input)
     await run('opencode', ['--version'], root)
 
     await reporter.update(`dibot-fast construyendo ${input.appName}`)
@@ -404,6 +440,9 @@ async function main() {
       verificationPassed: true,
       apiRuntimeVerified: true,
       databaseSeedVerified: true,
+      storageProvider: process.env.STORAGE_PROVIDER || 's3',
+      storagePrefix: process.env.STORAGE_PREFIX,
+      authProtocol: 'signed HttpOnly session cookie',
       repairRuns,
       durationMs,
       duration: formatDuration(durationMs),
