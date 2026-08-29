@@ -20,6 +20,14 @@ const requiredBinaries = [
   join(root, 'node_modules', 'esbuild', 'bin', 'esbuild'),
   esbuildPlatformBinary,
 ]
+// These packages are runtime requirements for the reusable storage contract,
+// not just optional build dependencies. A Box must not be considered ready if
+// Bun left a partial node_modules tree that can build but cannot provision R2.
+const requiredRuntimePackages = [
+  join(root, 'node_modules', '@aws-sdk', 'client-s3', 'package.json'),
+  join(root, 'node_modules', '@aws-sdk', 's3-request-presigner', 'package.json'),
+  join(root, 'node_modules', 'sharp', 'package.json'),
+]
 
 async function dependencyFingerprint() {
   const [manifest, lockfile] = await Promise.all([
@@ -35,16 +43,27 @@ async function rememberFingerprint(fingerprint: string) {
   await writeFile(join(runtimeDirectory, 'dependencies.fingerprint'), `${fingerprint}\n`, 'utf8')
 }
 
-const missing = requiredBinaries.filter((file) => !existsSync(file))
+const missing = [...requiredBinaries, ...requiredRuntimePackages].filter((file) => !existsSync(file))
 const fingerprint = await dependencyFingerprint()
 const previousFingerprint = await readFile(join(root, '.dibot-runtime', 'dependencies.fingerprint'), 'utf8')
   .then((value) => value.trim())
   .catch(() => '')
 
-if (missing.length === 0 && (!previousFingerprint || previousFingerprint === fingerprint)) {
+// The template Box carries a complete dependency snapshot. A generated app
+// can have a different lock fingerprint after OpenCode edits files, but that
+// must not turn every request into a fresh network install. The required
+// runtime/build markers are the readiness contract; the fingerprint is only
+// refreshed so the next workspace can reuse the same snapshot.
+if (missing.length === 0) {
   await rememberFingerprint(fingerprint)
-  console.log(`[deps] Dependencias listas; bun install omitido (fingerprint ${fingerprint.slice(0, 12)}).`)
+  console.log(`[deps] Dependencias listas desde el snapshot; bun install omitido (fingerprint ${fingerprint.slice(0, 12)}).`)
   process.exit(0)
+}
+
+if (process.env.DIBOT_DEPENDENCY_SNAPSHOT_ONLY === '1') {
+  console.error(`[deps] El snapshot de dependencias está incompleto; faltan ${missing.length} archivos.`)
+  console.error('[deps] Esta Box no puede instalar durante una ejecución de usuario. Actualiza la Box plantilla y crea un nuevo snapshot.')
+  process.exit(42)
 }
 
 console.log(previousFingerprint && previousFingerprint !== fingerprint
@@ -66,7 +85,7 @@ const installTimeoutMs = Number.isFinite(configuredTimeout)
   : 180_000
 
 function dependenciesReady() {
-  return requiredBinaries.every((file) => existsSync(file))
+  return [...requiredBinaries, ...requiredRuntimePackages].every((file) => existsSync(file))
 }
 
 async function removeIncompleteInstall() {
@@ -137,8 +156,8 @@ async function installDependencies(): Promise<number> {
       description: 'La instalación de dependencias',
     },
     {
-      args: ['install', '--frozen-lockfile', '--ignore-scripts', '--backend=hardlink', '--no-cache', '--force'],
-      description: 'El reintento completo de dependencias',
+      args: ['install', '--frozen-lockfile', '--ignore-scripts', '--backend=copyfile', '--no-cache', '--force'],
+      description: 'El reintento completo de dependencias con copia segura',
     },
   ]
 
