@@ -19,6 +19,7 @@ type ErrorCategory =
   | 'r2'
   | 'github'
   | 'dokploy'
+  | 'no_changes'
   | 'openai_rate_limit'
   | 'unknown'
 type LLMCallMetric = {
@@ -400,6 +401,7 @@ function classifyError(error: unknown): ErrorCategory {
   if (/GitHub|git push|repository/i.test(output)) return 'github'
   if (/Dokploy|deployment|preview/i.test(output)) return 'dokploy'
   if (/environment|\.env|AUTH_SESSION_SECRET|DIBOT_API_TOKEN/i.test(output)) return 'environment'
+  if (/no produjo cambios reales|no produjo cambios .*versión anterior/i.test(output)) return 'no_changes'
   if (/TS\d+|TypeScript|typecheck|tsc|cannot find name|does not exist on type/i.test(output)) return 'generated_typescript'
   if (/build failed|vite|esbuild|Rollup|failed to resolve import/i.test(output)) return 'generated_build'
   return 'unknown'
@@ -671,7 +673,26 @@ async function ensureProjectContext(input: WorkflowInput) {
 async function updateProjectState(input: WorkflowInput) {
   const status = await runCapture('git', ['status', '--short'], root)
   const changedFiles = status.split(/\r?\n/).map((line) => line.trim().slice(3)).filter(Boolean).slice(0, 80)
+  const meaningfulFiles = changedFiles.filter((file) => !isWorkflowMetadataFile(file))
+  if (input.mode === 'update' && meaningfulFiles.length === 0) return
   await writeFile(join(root, 'PROJECT_STATE.md'), `# Project State\n\n- Última operación: ${input.mode}\n- App: ${input.appName}\n- Última validación: ${new Date().toISOString()}\n- Build: válido\n- Base: ${process.env.TURSO_DATABASE_ID || 'persistente por app'}\n- Storage: ${process.env.STORAGE_PREFIX || 'namespace persistente por app'}\n\n## Archivos modificados\n${changedFiles.length ? changedFiles.map((file) => `- ${file}`).join('\n') : '- Sin cambios listados'}\n\n## Decisión\nSe conserva la arquitectura móvil, auth, Turso, R2 y las rutas existentes.\n`, 'utf8')
+}
+
+function isWorkflowMetadataFile(file: string): boolean {
+  const normalized = file.replaceAll('\\', '/').replace(/^\.?\//, '')
+  return normalized === 'PROJECT_STATE.md'
+    || normalized === 'APP_MANIFEST.md'
+    || normalized === 'DESIGN_BRIEF.md'
+    || normalized.startsWith('.dibot/')
+    || normalized.startsWith('.dibot-runtime/')
+}
+
+async function meaningfulUpdateFiles(): Promise<string[]> {
+  const status = await runCapture('git', ['status', '--short'], root)
+  return status.split(/\r?\n/)
+    .map((line) => line.trim().slice(3))
+    .filter(Boolean)
+    .filter((file) => !isWorkflowMetadataFile(file))
 }
 
 async function prepareDatabase(input: WorkflowInput) {
@@ -865,6 +886,9 @@ async function main() {
         await reporter.update(`Verificando DB, API, esbuild y frontend (intento ${repairRuns + 1})`)
         await verifyFunctionalApp(input)
         await updateProjectState(input)
+        if (input.mode === 'update' && (await meaningfulUpdateFiles()).length === 0) {
+          throw new Error('El update no produjo cambios reales en la aplicación; no se publicará nuevamente la versión anterior.')
+        }
         break
       } catch (verificationError) {
         const category = classifyError(verificationError)
