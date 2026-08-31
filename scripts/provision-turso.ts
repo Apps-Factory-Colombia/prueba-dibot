@@ -69,14 +69,60 @@ async function writeRuntimeEnv(values: Record<string, string>) {
   await writeFile('.env', `${normalized}\n`, 'utf8')
 }
 
+async function readExistingRuntimeValues() {
+  const values = new Map<string, string>()
+  for (const file of ['.env.turso', '.env']) {
+    let content: string
+    try { content = await readFile(file, 'utf8') } catch { continue }
+    for (const line of content.split(/\r?\n/)) {
+      const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/)
+      if (!match || values.has(match[1])) continue
+      const value = match[2].replace(/^("|')(.*)\1$/, '$2')
+      if (value) values.set(match[1], value)
+    }
+  }
+  return values
+}
+
+async function issueDatabaseToken(name: string) {
+  const token = await request<{ jwt: string }>(`/organizations/${encodeURIComponent(required('TURSO_ORG_SLUG'))}/databases/${encodeURIComponent(name)}/auth/tokens?expiration=never&authorization=full-access`, { method: 'POST' })
+  if (!token.jwt) throw new Error(`Turso no devolvió credenciales para ${name}.`)
+  return token.jwt
+}
+
+async function persistDatabaseRuntime(database: Database, organizationSlug: string, groupName: string, authToken: string, message: string) {
+  const values = {
+    TURSO_DATABASE_URL: `libsql://${database.Hostname}`,
+    TURSO_AUTH_TOKEN: authToken,
+    TURSO_DATABASE_ID: database.DbId,
+    TURSO_ORG_SLUG: organizationSlug,
+    TURSO_GROUP: groupName,
+    TURSO_DATABASE_NAME: database.Name,
+  }
+  await writeFile('.env.turso', Object.entries(values).map(([key, value]) => `${key}=${value}`).concat('').join('\n'), 'utf8')
+  await writeRuntimeEnv(values)
+  console.log(`${message} ${database.Name} (${database.DbId}) y actualizó .env plus .env.turso.`)
+}
+
 async function create() {
   const { organizationSlug, groupName, databases } = await context()
   const name = process.env.TURSO_DATABASE_NAME ?? 'dibot-app'
   if (!/^[a-z0-9](?:[a-z0-9-]{0,48}[a-z0-9])?$/.test(name)) {
     throw new Error(`Invalid TURSO_DATABASE_NAME "${name}". Use 1-50 lowercase letters, numbers, or hyphens.`)
   }
-  if (databases.some((database) => database.Name === name)) {
-    throw new Error(`Database ${name} already exists. Set TURSO_DATABASE_NAME to a new name.`)
+  const existing = databases.find((database) => database.Name === name)
+  if (existing) {
+    if (process.env.DIBOT_PARTIAL_CREATE_RECOVERY !== '1') {
+      throw new Error(`Database ${name} already exists. Set TURSO_DATABASE_NAME to a new name.`)
+    }
+    const previous = await readExistingRuntimeValues()
+    const previousId = previous.get('TURSO_DATABASE_ID')
+    if (previousId && previousId !== existing.DbId) {
+      throw new Error(`La recuperación rechazó la base ${name}: TURSO_DATABASE_ID no coincide con la base encontrada.`)
+    }
+    const authToken = previous.get('TURSO_AUTH_TOKEN') || await issueDatabaseToken(existing.Name)
+    await persistDatabaseRuntime(existing, organizationSlug, groupName, authToken, 'Reused existing database during partial recovery:')
+    return
   }
 
   const created = await request<{ database: Database }>(`/organizations/${encodeURIComponent(organizationSlug)}/databases`, {
@@ -85,17 +131,7 @@ async function create() {
   })
   const token = await request<{ jwt: string }>(`/organizations/${encodeURIComponent(organizationSlug)}/databases/${encodeURIComponent(name)}/auth/tokens?expiration=never&authorization=full-access`, { method: 'POST' })
   const database = created.database
-  const values = {
-    TURSO_DATABASE_URL: `libsql://${database.Hostname}`,
-    TURSO_AUTH_TOKEN: token.jwt,
-    TURSO_DATABASE_ID: database.DbId,
-    TURSO_ORG_SLUG: organizationSlug,
-    TURSO_GROUP: groupName,
-    TURSO_DATABASE_NAME: database.Name,
-  }
-  await writeFile('.env.turso', Object.entries(values).map(([key, value]) => `${key}=${value}`).concat('').join('\n'), 'utf8')
-  await writeRuntimeEnv(values)
-  console.log(`Created ${database.Name} (${database.DbId}) and updated .env plus .env.turso.`)
+  await persistDatabaseRuntime(database, organizationSlug, groupName, token.jwt, 'Created database:')
 }
 
 const command = process.argv[2] ?? 'check'
