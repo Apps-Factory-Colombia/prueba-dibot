@@ -50,8 +50,10 @@ const authSessionSecret = configuredAuthSessionSecret
       ? (() => { throw new Error('Falta AUTH_SESSION_SECRET y no hay DIBOT_AGENT_API_TOKEN para generarlo de forma segura.') })()
       : randomBytes(32).toString('base64url'))
 const metadata = {
-  ...(process.env.DIBOT_APP_ID?.trim() ? { 'dibot-app-id': process.env.DIBOT_APP_ID.trim() } : {}),
-  ...(process.env.DIBOT_APP_NAME?.trim() ? { 'dibot-app-name': process.env.DIBOT_APP_NAME.trim() } : {}),
+  // S3 user metadata is included in the SigV4 canonical request. Keep it
+  // strictly ASCII: app names are user input and may contain accents or
+  // characters whose encoding differs between the signer and R2.
+  'dibot-app-id': appId,
 }
 const client = new S3Client({
   region: 'auto',
