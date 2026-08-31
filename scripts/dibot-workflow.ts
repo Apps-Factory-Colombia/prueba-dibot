@@ -684,7 +684,6 @@ async function prepareDatabase(input: WorkflowInput) {
     console.log(`[turso] Base nueva preparada para ${input.appName}.`)
   } else {
     await run('bun', ['run', 'db:check'], root)
-    await run('bun', ['run', 'db:snapshot'], root)
   }
 }
 
@@ -697,7 +696,13 @@ async function prepareStorage(input: WorkflowInput) {
     DIBOT_APP_NAME: input.appName,
     DIBOT_REQUIRE_STORAGE: '1',
   }
-  await run('bun', ['run', 'storage:provision'], root, environment)
+  const expectedPrefix = `STORAGE_PREFIX=apps/${input.appName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 70) || 'app'}-`
+  const existingStorage = await readFile(join(root, '.env.storage'), 'utf8').catch(() => '')
+  if (!existingStorage.includes(expectedPrefix)) {
+    await run('bun', ['run', 'storage:provision'], root, environment)
+  } else {
+    console.log('[storage] Namespace R2 existente reutilizado; no se reprovisiona en este update.')
+  }
   loadEnv({ path: join(root, '.env'), override: true })
   process.env.DIBOT_APP_ID = input.appId
   process.env.DIBOT_APP_NAME = input.appName
@@ -771,7 +776,8 @@ async function runInitialAgent(input: WorkflowInput) {
 }
 
 async function verifyFunctionalApp(input: WorkflowInput) {
-  await runCapture('bun', ['run', 'dibot:verify:fast'], root)
+  await runCapture('bun', ['run', 'validate:changed', input.mode], root)
+  const databaseTouched = input.mode === 'create' || await schemaChanged() || await databaseFilesChanged()
   if (process.env.DIBOT_PREVIEW_ONLY === '1') {
     // Preview no deploys a container, but its server bundle still reads the
     // app's Turso database at request time. Keep the fast static delivery
@@ -779,21 +785,32 @@ async function verifyFunctionalApp(input: WorkflowInput) {
     // is uploaded; otherwise a fresh preview can render and still return 500
     // from every real endpoint because the database is empty.
     console.log('[preview] Sincronizando y validando Turso antes de publicar dist.')
-    if (input.mode === 'create' || await schemaChanged()) await runCapture('bun', ['run', 'db:push'], root)
-    await runCapture('bun', ['run', 'db:seed'], root)
-    if (input.mode === 'update') await runCapture('bun', ['run', 'db:snapshot:verify'], root)
-    await runCapture('bun', ['run', 'db:verify'], root)
-    await runCapture('bun', ['run', 'test:functional'], root)
+    if (databaseTouched) {
+      if (input.mode === 'update' && await schemaChanged()) await runCapture('bun', ['run', 'db:snapshot'], root)
+      if (input.mode === 'create' || await schemaChanged()) await runCapture('bun', ['run', 'db:push'], root)
+      await runCapture('bun', ['run', 'db:seed'], root)
+      if (input.mode === 'update' && await schemaChanged()) await runCapture('bun', ['run', 'db:snapshot:verify'], root)
+      await runCapture('bun', ['run', 'db:verify'], root)
+      await runCapture('bun', ['run', 'test:functional'], root)
+    }
     return
   }
-  if (input.mode === 'create' || await schemaChanged()) await runCapture('bun', ['run', 'db:push'], root)
-  await runCapture('bun', ['run', 'db:seed'], root)
-  if (input.mode === 'update') await runCapture('bun', ['run', 'db:snapshot:verify'], root)
-  await runCapture('bun', ['run', 'db:verify'], root)
+  if (databaseTouched) {
+    if (input.mode === 'update' && await schemaChanged()) await runCapture('bun', ['run', 'db:snapshot'], root)
+    if (input.mode === 'create' || await schemaChanged()) await runCapture('bun', ['run', 'db:push'], root)
+    await runCapture('bun', ['run', 'db:seed'], root)
+    if (input.mode === 'update' && await schemaChanged()) await runCapture('bun', ['run', 'db:snapshot:verify'], root)
+    await runCapture('bun', ['run', 'db:verify'], root)
+  }
 }
 
 async function schemaChanged() {
   const output = await runCapture('git', ['status', '--short', '--', 'api/db/schema.ts', 'drizzle'], root)
+  return Boolean(output.trim())
+}
+
+async function databaseFilesChanged() {
+  const output = await runCapture('git', ['status', '--short', '--', 'api/db', 'drizzle', 'scripts/provision-turso.ts'], root)
   return Boolean(output.trim())
 }
 

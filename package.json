@@ -12,6 +12,7 @@
     "build:wrapper": "bun scripts/build-wrapper.ts",
     "build:app": "bun node_modules/vite/bin/vite.js build",
     "build:server": "bun scripts/build-esbuild.ts",
+    "validate:changed": "bun scripts/validate-changed.ts",
     "analyze": "bun scripts/analyze-bundles.ts",
     "lint": "bun node_modules/eslint/bin/eslint.js .",
     "preview": "bun node_modules/vite/bin/vite.js preview",
