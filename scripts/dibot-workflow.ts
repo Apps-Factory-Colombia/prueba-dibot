@@ -321,34 +321,89 @@ function mergeUsage(left: UsageMetrics | undefined, right: UsageMetrics | undefi
   }
 }
 
+function openCodeModel(args: string[]) {
+  const modelIndex = args.indexOf('--model')
+  return modelIndex >= 0 && args[modelIndex + 1]
+    ? args[modelIndex + 1]!
+    : process.env.DIBOT_OPENCODE_MODEL?.trim() || 'openai/gpt-5.6-luna'
+}
+
+function withOpenCodeModel(args: string[], model: string) {
+  const next = [...args]
+  const modelIndex = next.indexOf('--model')
+  if (modelIndex >= 0) next[modelIndex + 1] = model
+  else next.push('--model', model)
+  return next
+}
+
+function isOpenCodeRateLimitError(error: unknown) {
+  const output = error instanceof CommandError ? error.output : error instanceof Error ? error.message : String(error)
+  return /(?:\b429\b|rate[_ -]?limit|tokens?\s+per\s+min|too many requests|request too large)/i.test(output)
+}
+
+function openCodeRetryAttempts() {
+  const configured = Number(process.env.DIBOT_OPENCODE_RETRY_ATTEMPTS ?? 4)
+  if (!Number.isFinite(configured)) return 4
+  return Math.min(5, Math.max(1, Math.floor(configured)))
+}
+
+function openCodeRetryDelayMs(attempt: number) {
+  const configured = Number(process.env.DIBOT_OPENCODE_RETRY_BASE_MS ?? 15_000)
+  const base = Number.isFinite(configured) && configured > 0 ? configured : 15_000
+  return Math.min(90_000, Math.round(base * (2 ** Math.max(0, attempt - 1))))
+}
+
+function wait(milliseconds: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, milliseconds))
+}
+
 async function runOpenCode(args: string[]) {
-  const startedAt = Date.now()
-  let output: string
-  try {
-    output = await runCapture('opencode', [...args, '--format', 'json'], root)
-  } catch (error) {
-    output = error instanceof CommandError ? error.output : ''
-    const partial = eventUsage(output, process.env.DIBOT_OPENCODE_MODEL?.trim() || 'unknown', Date.now() - startedAt)
-    collectedUsage = mergeUsage(collectedUsage, partial)
-    throw error
+  const configuredModel = openCodeModel(args)
+  const fallbackModel = process.env.DIBOT_OPENCODE_FALLBACK_MODEL?.trim() || 'openai/gpt-5.4-nano'
+  const attempts = openCodeRetryAttempts()
+  let currentArgs = args
+  let currentModel = configuredModel
+  let lastError: unknown
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const startedAt = Date.now()
+    try {
+      const output = await runCapture('opencode', [...currentArgs, '--format', 'json'], root)
+      const durationMs = Date.now() - startedAt
+      const usage = estimateCost(await storedOpenCodeUsage(output, currentModel, durationMs) || eventUsage(output, currentModel, durationMs) || {
+        model: currentModel,
+        requests: 0,
+        inputTokens: 0,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+        totalTokens: 0,
+        estimatedCostUsd: null,
+        durationMs,
+        costSource: 'unavailable',
+      })
+      const usableUsage = usage.requests > 0 || usage.totalTokens > 0 || usage.estimatedCostUsd !== null ? usage : undefined
+      collectedUsage = mergeUsage(collectedUsage, usableUsage)
+      return usableUsage
+    } catch (error) {
+      lastError = error
+      const output = error instanceof CommandError ? error.output : ''
+      const partial = eventUsage(output, currentModel, Date.now() - startedAt)
+      collectedUsage = mergeUsage(collectedUsage, partial)
+      if (!isOpenCodeRateLimitError(error) || attempt >= attempts) throw error
+
+      const nextModel = attempt === 1 && fallbackModel && fallbackModel !== currentModel
+        ? fallbackModel
+        : currentModel
+      const delay = openCodeRetryDelayMs(attempt)
+      console.log(`[opencode] Límite temporal de OpenAI; reintentando en ${Math.ceil(delay / 1000)} s con ${nextModel}.`)
+      await wait(delay)
+      currentModel = nextModel
+      currentArgs = withOpenCodeModel(currentArgs, currentModel)
+    }
   }
-  const durationMs = Date.now() - startedAt
-  const model = process.env.DIBOT_OPENCODE_MODEL?.trim() || 'openai/gpt-5.6-luna'
-  const usage = estimateCost(await storedOpenCodeUsage(output, model, durationMs) || eventUsage(output, model, durationMs) || {
-    model,
-    requests: 0,
-    inputTokens: 0,
-    cachedInputTokens: 0,
-    outputTokens: 0,
-    reasoningTokens: 0,
-    totalTokens: 0,
-    estimatedCostUsd: null,
-    durationMs,
-    costSource: 'unavailable',
-  })
-  const usableUsage = usage.requests > 0 || usage.totalTokens > 0 || usage.estimatedCostUsd !== null ? usage : undefined
-  collectedUsage = mergeUsage(collectedUsage, usableUsage)
-  return usableUsage
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError))
 }
 
 class JsonApi {
