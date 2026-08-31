@@ -9,6 +9,39 @@ loadEnv()
 type JsonObject = Record<string, unknown>
 type Mode = 'create' | 'update'
 type WorkflowInput = { userId: string; appId: string; appName: string; mode: Mode; prompt: string }
+type ErrorCategory =
+  | 'generated_typescript'
+  | 'generated_build'
+  | 'dependency'
+  | 'eslint_config'
+  | 'environment'
+  | 'turso'
+  | 'r2'
+  | 'github'
+  | 'dokploy'
+  | 'openai_rate_limit'
+  | 'unknown'
+type LLMCallMetric = {
+  runId: string
+  appId: string
+  userId: string
+  operation: Mode
+  stage: string
+  requestedModel: string
+  actualModel: string
+  inputTokens: number
+  cachedInputTokens: number
+  outputTokens: number
+  reasoningTokens: number
+  totalTokens: number
+  queuedAt: number
+  startedAt: number
+  completedAt: number
+  queueWaitMs: number
+  executionMs: number
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  errorCategory?: ErrorCategory
+}
 type UsageMetrics = {
   model: string
   requests: number
@@ -23,6 +56,16 @@ type UsageMetrics = {
 }
 
 let collectedUsage: UsageMetrics | undefined
+const collectedLlmCalls: LLMCallMetric[] = []
+let currentInput: WorkflowInput | undefined
+let publishLlmMetric: ((metric: LLMCallMetric) => Promise<void>) | undefined
+let workflowDeadlineAt = 0
+
+const LUNA_MODEL = 'openai/gpt-5.6-luna'
+const MAX_AI_REPAIRS_CREATE = 1
+const MAX_AI_REPAIRS_UPDATE = 1
+const MAX_CREATE_TIME_MS = 10 * 60 * 1000
+const MAX_UPDATE_TIME_MS = 8 * 60 * 1000
 
 const root = process.cwd()
 
@@ -148,15 +191,25 @@ async function run(command: string, args: string[], cwd: string, extraEnv: NodeJ
   })
 }
 
-async function runCapture(command: string, args: string[], cwd: string, extraEnv: NodeJS.ProcessEnv = {}) {
+async function runCapture(command: string, args: string[], cwd: string, extraEnv: NodeJS.ProcessEnv = {}, timeoutMs = 0) {
   console.log(`\n$ ${redact(`${command} ${args.join(' ')}`)}`)
   return await new Promise<string>((resolve, reject) => {
     const child = spawn(command, args, { cwd, env: childEnv(extraEnv), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
     let output = ''
+    let settled = false
+    const timer = timeoutMs > 0 ? setTimeout(() => {
+      if (settled) return
+      settled = true
+      child.kill()
+      reject(new CommandError(`${command} excedió el tiempo máximo de ${Math.ceil(timeoutMs / 1000)} s.`, redact(output)))
+    }, timeoutMs) : undefined
     child.stdout.on('data', (chunk: Buffer) => { const text = chunk.toString(); output += text; process.stdout.write(text) })
     child.stderr.on('data', (chunk: Buffer) => { const text = chunk.toString(); output += text; process.stderr.write(text) })
-    child.once('error', reject)
+    child.once('error', (error) => { if (!settled) { settled = true; if (timer) clearTimeout(timer); reject(error) } })
     child.once('exit', (code, signal) => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
       if (code === 0) resolve(output)
       else reject(new CommandError(`${command} terminó con código ${code ?? 'null'}${signal ? ` (${signal})` : ''}.`, redact(output)))
     })
@@ -323,17 +376,13 @@ function mergeUsage(left: UsageMetrics | undefined, right: UsageMetrics | undefi
 
 function openCodeModel(args: string[]) {
   const modelIndex = args.indexOf('--model')
-  return modelIndex >= 0 && args[modelIndex + 1]
+  const requested = modelIndex >= 0 && args[modelIndex + 1]
     ? args[modelIndex + 1]!
-    : process.env.DIBOT_OPENCODE_MODEL?.trim() || 'openai/gpt-5.6-luna'
-}
-
-function withOpenCodeModel(args: string[], model: string) {
-  const next = [...args]
-  const modelIndex = next.indexOf('--model')
-  if (modelIndex >= 0) next[modelIndex + 1] = model
-  else next.push('--model', model)
-  return next
+    : process.env.DIBOT_OPENCODE_MODEL?.trim() || LUNA_MODEL
+  if (requested !== LUNA_MODEL) {
+    throw new Error(`Modelo no permitido: ${requested}. El workflow solo utiliza ${LUNA_MODEL}.`)
+  }
+  return LUNA_MODEL
 }
 
 function isOpenCodeRateLimitError(error: unknown) {
@@ -341,69 +390,98 @@ function isOpenCodeRateLimitError(error: unknown) {
   return /(?:\b429\b|rate[_ -]?limit|tokens?\s+per\s+min|too many requests|request too large)/i.test(output)
 }
 
-function openCodeRetryAttempts() {
-  const configured = Number(process.env.DIBOT_OPENCODE_RETRY_ATTEMPTS ?? 4)
-  if (!Number.isFinite(configured)) return 4
-  return Math.min(5, Math.max(1, Math.floor(configured)))
+function classifyError(error: unknown): ErrorCategory {
+  const output = error instanceof CommandError ? error.output : error instanceof Error ? `${error.message}\n${error.cause ?? ''}` : String(error)
+  if (isOpenCodeRateLimitError(error)) return 'openai_rate_limit'
+  if (/ESLint|eslint\.config|ResolveMessage|typescript-eslint/i.test(output)) return 'eslint_config'
+  if (/bun install|node_modules|lifecycle script|failed to enqueue|dependency|ENOENT.*(?:esbuild|node_modules)/i.test(output)) return 'dependency'
+  if (/TURSO|libsql|drizzle|database|migration|seed/i.test(output)) return 'turso'
+  if (/R2|S3|storage|SignatureDoesNotMatch|bucket/i.test(output)) return 'r2'
+  if (/GitHub|git push|repository/i.test(output)) return 'github'
+  if (/Dokploy|deployment|preview/i.test(output)) return 'dokploy'
+  if (/environment|\.env|AUTH_SESSION_SECRET|DIBOT_API_TOKEN/i.test(output)) return 'environment'
+  if (/TS\d+|TypeScript|typecheck|tsc|cannot find name|does not exist on type/i.test(output)) return 'generated_typescript'
+  if (/build failed|vite|esbuild|Rollup|failed to resolve import/i.test(output)) return 'generated_build'
+  return 'unknown'
 }
 
-function openCodeRetryDelayMs(attempt: number) {
-  const configured = Number(process.env.DIBOT_OPENCODE_RETRY_BASE_MS ?? 15_000)
-  const base = Number.isFinite(configured) && configured > 0 ? configured : 15_000
-  return Math.min(90_000, Math.round(base * (2 ** Math.max(0, attempt - 1))))
-}
-
-function wait(milliseconds: number) {
-  return new Promise<void>((resolve) => setTimeout(resolve, milliseconds))
+function ensureWorkflowTime() {
+  if (workflowDeadlineAt > 0 && Date.now() >= workflowDeadlineAt) {
+    throw new Error(`Se alcanzó el tiempo máximo del workflow (${currentInput?.mode === 'update' ? 8 : 10} minutos).`)
+  }
 }
 
 async function runOpenCode(args: string[]) {
+  ensureWorkflowTime()
   const configuredModel = openCodeModel(args)
-  const fallbackModel = process.env.DIBOT_OPENCODE_FALLBACK_MODEL?.trim() || 'openai/gpt-5.4-nano'
-  const attempts = openCodeRetryAttempts()
-  let currentArgs = args
-  let currentModel = configuredModel
-  let lastError: unknown
-
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const startedAt = Date.now()
-    try {
-      const output = await runCapture('opencode', [...currentArgs, '--format', 'json'], root)
-      const durationMs = Date.now() - startedAt
-      const usage = estimateCost(await storedOpenCodeUsage(output, currentModel, durationMs) || eventUsage(output, currentModel, durationMs) || {
-        model: currentModel,
-        requests: 0,
-        inputTokens: 0,
-        cachedInputTokens: 0,
-        outputTokens: 0,
-        reasoningTokens: 0,
-        totalTokens: 0,
-        estimatedCostUsd: null,
-        durationMs,
-        costSource: 'unavailable',
-      })
-      const usableUsage = usage.requests > 0 || usage.totalTokens > 0 || usage.estimatedCostUsd !== null ? usage : undefined
-      collectedUsage = mergeUsage(collectedUsage, usableUsage)
-      return usableUsage
-    } catch (error) {
-      lastError = error
-      const output = error instanceof CommandError ? error.output : ''
-      const partial = eventUsage(output, currentModel, Date.now() - startedAt)
-      collectedUsage = mergeUsage(collectedUsage, partial)
-      if (!isOpenCodeRateLimitError(error) || attempt >= attempts) throw error
-
-      const nextModel = attempt === 1 && fallbackModel && fallbackModel !== currentModel
-        ? fallbackModel
-        : currentModel
-      const delay = openCodeRetryDelayMs(attempt)
-      console.log(`[opencode] Límite temporal de OpenAI; reintentando en ${Math.ceil(delay / 1000)} s con ${nextModel}.`)
-      await wait(delay)
-      currentModel = nextModel
-      currentArgs = withOpenCodeModel(currentArgs, currentModel)
+  const queuedAt = Date.now()
+  const startedAt = queuedAt
+  const callBase = {
+    runId: process.env.DIBOT_RUN_ID?.trim() || '',
+    appId: currentInput?.appId || process.env.DIBOT_APP_ID?.trim() || '',
+    userId: currentInput?.userId || '',
+    operation: currentInput?.mode || 'create',
+    stage: 'opencode',
+    requestedModel: configuredModel,
+    actualModel: configuredModel,
+    queuedAt,
+    startedAt,
+    queueWaitMs: 0,
+  } satisfies Pick<LLMCallMetric, 'runId' | 'appId' | 'userId' | 'operation' | 'stage' | 'requestedModel' | 'actualModel' | 'queuedAt' | 'startedAt' | 'queueWaitMs'>
+  try {
+    const remainingMs = workflowDeadlineAt > 0 ? Math.max(1_000, workflowDeadlineAt - Date.now()) : 0
+    const output = await runCapture('opencode', [...args, '--format', 'json'], root, {}, remainingMs)
+    const completedAt = Date.now()
+    const durationMs = completedAt - startedAt
+    const usage = estimateCost(await storedOpenCodeUsage(output, configuredModel, durationMs) || eventUsage(output, configuredModel, durationMs) || {
+      model: configuredModel,
+      requests: 0,
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+      estimatedCostUsd: null,
+      durationMs,
+      costSource: 'unavailable',
+    })
+    const usableUsage = usage.requests > 0 || usage.totalTokens > 0 || usage.estimatedCostUsd !== null ? usage : undefined
+    collectedUsage = mergeUsage(collectedUsage, usableUsage)
+    const metric: LLMCallMetric = {
+      ...callBase,
+      completedAt,
+      executionMs: durationMs,
+      status: 'completed',
+      inputTokens: usableUsage?.inputTokens ?? 0,
+      cachedInputTokens: usableUsage?.cachedInputTokens ?? 0,
+      outputTokens: usableUsage?.outputTokens ?? 0,
+      reasoningTokens: usableUsage?.reasoningTokens ?? 0,
+      totalTokens: usableUsage?.totalTokens ?? 0,
     }
+    collectedLlmCalls.push(metric)
+    await publishLlmMetric?.(metric)
+    return usableUsage
+  } catch (error) {
+    const completedAt = Date.now()
+    const output = error instanceof CommandError ? error.output : ''
+    const partial = eventUsage(output, configuredModel, completedAt - startedAt)
+    collectedUsage = mergeUsage(collectedUsage, partial)
+    const metric: LLMCallMetric = {
+      ...callBase,
+      completedAt,
+      executionMs: completedAt - startedAt,
+      status: 'failed',
+      errorCategory: classifyError(error),
+      inputTokens: partial?.inputTokens ?? 0,
+      cachedInputTokens: partial?.cachedInputTokens ?? 0,
+      outputTokens: partial?.outputTokens ?? 0,
+      reasoningTokens: partial?.reasoningTokens ?? 0,
+      totalTokens: partial?.totalTokens ?? 0,
+    }
+    collectedLlmCalls.push(metric)
+    await publishLlmMetric?.(metric)
+    throw error
   }
-
-  throw lastError instanceof Error ? lastError : new Error(String(lastError))
 }
 
 class JsonApi {
@@ -462,9 +540,21 @@ class DibotReporter {
     console.log(`Workflow (${this.input.mode}) iniciado. jobId=${this.jobId}`)
   }
 
-  async update(currentStep: string) {
+  async update(currentStep: string, result?: JsonObject) {
     if (!this.jobId) return
-    await this.api.request(`dibot/agent-jobs/${encodeURIComponent(this.jobId)}`, { method: 'PATCH', body: JSON.stringify({ currentStep }) })
+    await this.api.request(`dibot/agent-jobs/${encodeURIComponent(this.jobId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ currentStep, ...(result ? { result } : {}) }),
+    })
+  }
+
+  async publishLlmMetric(metric: LLMCallMetric) {
+    if (!this.jobId) return
+    await this.update(`OpenCode ${metric.status}: ${metric.actualModel}`, {
+      usage: collectedUsage,
+      llmCalls: collectedLlmCalls,
+      lastCall: metric,
+    })
   }
 
   async complete(result: JsonObject) {
@@ -474,11 +564,12 @@ class DibotReporter {
       body: JSON.stringify({
         status: 'completed',
         currentStep: 'App, API, Turso y build verificados',
-        result: {
+      result: {
           ...result,
           runId: this.jobId,
           model: collectedUsage?.model || process.env.DIBOT_OPENCODE_MODEL || 'unknown',
           ...(collectedUsage ? { usage: collectedUsage } : {}),
+          llmCalls: collectedLlmCalls,
         },
       }),
     })
@@ -493,10 +584,13 @@ class DibotReporter {
         body: JSON.stringify({
           status: 'failed',
           currentStep: `Workflow falló: ${redact(message)}`,
+          error: redact(message),
           result: {
             runId: this.jobId,
             model: collectedUsage?.model || process.env.DIBOT_OPENCODE_MODEL || 'unknown',
             ...(collectedUsage ? { usage: collectedUsage } : {}),
+            llmCalls: collectedLlmCalls,
+            errorCategory: classifyError(error),
           },
         }),
       })
@@ -533,7 +627,7 @@ async function registerApp(input: WorkflowInput) {
 }
 
 function openCodeBase() {
-  const model = process.env.DIBOT_OPENCODE_MODEL?.trim() || 'openai/gpt-5.6-luna'
+  const model = openCodeModel([])
   const variant = process.env.DIBOT_OPENCODE_VARIANT?.trim() || 'medium'
   const base = ['run', '--model', model, '--variant', variant]
   const attach = process.env.OPENCODE_ATTACH_URL?.trim()
@@ -675,6 +769,8 @@ async function main() {
   let reporter: DibotReporter | undefined
   try {
     const input = parseInput(process.argv.slice(2))
+    currentInput = input
+    workflowDeadlineAt = startedAt + (input.mode === 'update' ? MAX_UPDATE_TIME_MS : MAX_CREATE_TIME_MS)
     process.env.DIBOT_APP_ID = input.appId
     process.env.DIBOT_APP_NAME = input.appName
     ensureAuthSessionSecret(input)
@@ -691,6 +787,8 @@ async function main() {
 
     reporter = new DibotReporter(input)
     await reporter.start()
+    process.env.DIBOT_RUN_ID = reporter.id || ''
+    publishLlmMetric = (metric) => reporter!.publishLlmMetric(metric)
     await applyAppMetadata(input)
     await reporter.update(`Preparando Turso para ${input.appName}`)
     await prepareDatabase(input)
@@ -702,18 +800,24 @@ async function main() {
     const openCodeStartedAt = Date.now()
     const superPromptCached = await runInitialAgent(input)
     let repairRuns = 0
-    const maxRepairRuns = Math.max(0, Math.min(2, Number(process.env.DIBOT_MAX_REPAIR_RUNS ?? 2)))
+    const maxRepairRuns = input.mode === 'update' ? MAX_AI_REPAIRS_UPDATE : MAX_AI_REPAIRS_CREATE
 
     while (true) {
       try {
+        ensureWorkflowTime()
         await reporter.update(`Verificando DB, API, esbuild y frontend (intento ${repairRuns + 1})`)
         await verifyFunctionalApp(input)
         break
       } catch (verificationError) {
+        const category = classifyError(verificationError)
         if (repairRuns >= maxRepairRuns) {
-          throw new Error(`La validación falló y se alcanzó el máximo de reparaciones (${maxRepairRuns}). ${redact(verificationError instanceof Error ? verificationError.message : String(verificationError))}`, { cause: verificationError })
+          throw new Error(`La validación falló y se alcanzó el máximo de reparaciones (${maxRepairRuns}); categoría=${category}. ${redact(verificationError instanceof Error ? verificationError.message : String(verificationError))}`, { cause: verificationError })
+        }
+        if (!['generated_typescript', 'generated_build', 'unknown'].includes(category)) {
+          throw new Error(`La validación no se enviará a OpenCode porque es un error de ${category}. ${redact(verificationError instanceof Error ? verificationError.message : String(verificationError))}`, { cause: verificationError })
         }
         repairRuns += 1
+        ensureWorkflowTime()
         await reporter.update(`dibot-fast corrigiendo su entrega (reparación ${repairRuns})`)
         await repairWithDibotFast(input, verificationError, repairRuns)
       }
@@ -744,6 +848,8 @@ async function main() {
       workspace: root,
       externalSteps: ['publicar en GitHub', 'desplegar en Dokploy'],
       ...(collectedUsage ? { usage: collectedUsage, model: collectedUsage.model, runId: reporter.id } : {}),
+      llmCalls: collectedLlmCalls,
+      maxAiRepairs: maxRepairRuns,
     }
     await reporter.complete(result)
     console.log(`\nWorkflow (${input.mode}) terminó correctamente en ${formatDuration(durationMs)}. jobId=${reporter.id}`)
