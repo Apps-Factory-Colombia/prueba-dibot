@@ -397,11 +397,16 @@ function classifyError(error: unknown): ErrorCategory {
   if (/ESLint|eslint\.config|ResolveMessage|typescript-eslint/i.test(output)) return 'eslint_config'
   if (/bun install|node_modules|lifecycle script|failed to enqueue|dependency|ENOENT.*(?:esbuild|node_modules)/i.test(output)) return 'dependency'
   if (/TURSO|libsql|drizzle|database|migration|seed/i.test(output)) return 'turso'
-  if (/R2|S3|storage|SignatureDoesNotMatch|bucket/i.test(output)) return 'r2'
+  // Validation output frequently mentions the infrastructure-owned
+  // provision-storage script even when the real failure is in generated app
+  // code. Only classify an actual storage error as R2; otherwise let the
+  // bounded dibot-fast repair handle the generated contract.
+  if (/SignatureDoesNotMatch|R2.*(?:error|fail|fall)|S3.*(?:error|fail|fall)|storage.*(?:error|fail|fall|no pudo)|bucket.*(?:error|fail|fall)/i.test(output)) return 'r2'
   if (/GitHub|git push|repository/i.test(output)) return 'github'
   if (/Dokploy|deployment|preview/i.test(output)) return 'dokploy'
   if (/environment|\.env|AUTH_SESSION_SECRET|DIBOT_API_TOKEN/i.test(output)) return 'environment'
   if (/no produjo cambios reales|no produjo cambios .*versión anterior/i.test(output)) return 'no_changes'
+  if (/App incompleta|Nombre incompleto|contratos generados|validate:changed|verify:generated/i.test(output)) return 'unknown'
   if (/TS\d+|TypeScript|typecheck|tsc|cannot find name|does not exist on type/i.test(output)) return 'generated_typescript'
   if (/build failed|vite|esbuild|Rollup|failed to resolve import/i.test(output)) return 'generated_build'
   return 'unknown'

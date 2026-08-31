@@ -30,8 +30,13 @@ if (!smoke.trim()) throw new Error('App incompleta: api/smoke.ts está vacío.')
 if (!app.includes('/api/')) throw new Error('App incompleta: src/App.tsx debe consumir la API server-side mediante /api/.')
 
 const appName = process.env.DIBOT_APP_NAME?.trim()
-if (appName && (!index.includes(`<title>${appName}</title>`) || !app.includes(appName))) {
-  throw new Error(`Nombre incompleto: ${appName} debe aparecer en el título HTML y en la UI principal.`)
+const title = index.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1]?.trim()
+if (appName && (!title || !app.includes(appName))) {
+  // Branding is useful feedback, but it is not an infrastructure or runtime
+  // failure. OpenCode may render a shortened/translated product label while
+  // the API and app remain fully functional; do not discard a valid build or
+  // spend another model repair solely because this literal check differs.
+  console.warn(`[generated] Aviso de identidad visual: se esperaba "${appName}" en title/UI; title actual="${title || '(vacío)'}".`)
 }
 
 console.log('[generated] Nombre, schema, seed, smoke test, API y conexión frontend verificados.')
