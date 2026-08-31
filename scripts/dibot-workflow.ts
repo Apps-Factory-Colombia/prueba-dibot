@@ -9,6 +9,20 @@ loadEnv()
 type JsonObject = Record<string, unknown>
 type Mode = 'create' | 'update'
 type WorkflowInput = { userId: string; appId: string; appName: string; mode: Mode; prompt: string }
+type UsageMetrics = {
+  model: string
+  requests: number
+  inputTokens: number
+  cachedInputTokens: number
+  outputTokens: number
+  reasoningTokens: number
+  totalTokens: number
+  estimatedCostUsd: number | null
+  durationMs: number
+  costSource: 'opencode' | 'estimated' | 'unavailable'
+}
+
+let collectedUsage: UsageMetrics | undefined
 
 const root = process.cwd()
 
@@ -149,6 +163,194 @@ async function runCapture(command: string, args: string[], cwd: string, extraEnv
   })
 }
 
+function numeric(value: unknown, integer = true) {
+  if (value === null || value === undefined || value === '') return undefined
+  const parsed = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(parsed)) return undefined
+  return integer ? Math.max(0, Math.round(parsed)) : parsed
+}
+
+function usageRecord(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const source = value as JsonObject
+  const cache = source.cache && typeof source.cache === 'object' ? source.cache as JsonObject : undefined
+  const read = (keys: string[], integer = true) => {
+    for (const key of keys) {
+      const result = numeric(source[key], integer)
+      if (result !== undefined) return result
+    }
+    return undefined
+  }
+  const inputTokens = read(['inputTokens', 'input_tokens', 'input']) ?? 0
+  const cachedInputTokens = read(['cachedInputTokens', 'cached_input_tokens', 'cacheReadInputTokens', 'cache_read_input_tokens', 'cacheRead', 'cache_read'])
+    ?? (cache ? numeric(cache.read ?? cache.cached ?? cache.input ?? cache.cacheRead) : undefined)
+    ?? 0
+  const outputTokens = read(['outputTokens', 'output_tokens', 'output']) ?? 0
+  const reasoningTokens = read(['reasoningTokens', 'reasoning_tokens', 'reasoning']) ?? 0
+  const totalTokens = read(['totalTokens', 'total_tokens', 'total']) ?? inputTokens + outputTokens
+  const cost = read(['estimatedCostUsd', 'estimated_cost_usd', 'costUsd', 'cost_usd', 'cost'], false)
+  const model = typeof source.model === 'string' && source.model.trim()
+    ? source.model.trim()
+    : typeof source.modelId === 'string' && source.modelId.trim() ? source.modelId.trim() : ''
+  const hasValues = inputTokens > 0 || cachedInputTokens > 0 || outputTokens > 0 || reasoningTokens > 0 || totalTokens > 0 || cost !== undefined
+  if (!hasValues) return undefined
+  return { model, inputTokens, cachedInputTokens, outputTokens, reasoningTokens, totalTokens, cost }
+}
+
+function jsonObjects(output: string) {
+  const values: JsonObject[] = []
+  for (const line of output.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith('{')) continue
+    try {
+      const parsed = JSON.parse(trimmed) as unknown
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) values.push(parsed as JsonObject)
+    } catch {
+      // OpenCode may interleave a human-readable line with its JSON events.
+    }
+  }
+  return values
+}
+
+function sessionIds(output: string) {
+  return [...new Set([...output.matchAll(/"(?:sessionID|session_id)"\s*:\s*"([^"]+)"/g)].map((match) => match[1]))]
+}
+
+function eventUsage(output: string, model: string, durationMs: number): UsageMetrics | undefined {
+  const records: Array<NonNullable<ReturnType<typeof usageRecord>>> = []
+  for (const event of jsonObjects(output)) {
+    const seenInEvent = new Set<string>()
+    const part = event.part && typeof event.part === 'object' ? event.part as JsonObject : undefined
+    const candidates = [
+      event.usage,
+      event.tokens,
+      part?.usage,
+      part?.tokens,
+      event.type === 'step_finish' ? part : undefined,
+    ]
+    for (const candidate of candidates) {
+      const record = usageRecord(candidate)
+      if (!record) continue
+      const key = JSON.stringify(record)
+      if (seenInEvent.has(key)) continue
+      seenInEvent.add(key)
+      records.push(record)
+    }
+  }
+  if (!records.length) return undefined
+  const inputTokens = records.reduce((sum, record) => sum + record.inputTokens, 0)
+  const cachedInputTokens = records.reduce((sum, record) => sum + record.cachedInputTokens, 0)
+  const outputTokens = records.reduce((sum, record) => sum + record.outputTokens, 0)
+  const reasoningTokens = records.reduce((sum, record) => sum + record.reasoningTokens, 0)
+  const totalTokens = records.reduce((sum, record) => sum + record.totalTokens, 0)
+  const knownCosts = records.every((record) => record.cost !== undefined)
+  const cost = knownCosts ? records.reduce((sum, record) => sum + (record.cost ?? 0), 0) : undefined
+  return {
+    model: records.find((record) => record.model)?.model || model,
+    requests: records.length,
+    inputTokens,
+    cachedInputTokens,
+    outputTokens,
+    reasoningTokens,
+    totalTokens,
+    estimatedCostUsd: cost ?? null,
+    durationMs,
+    costSource: cost === undefined ? 'unavailable' : 'opencode',
+  }
+}
+
+function estimateCost(metrics: UsageMetrics): UsageMetrics {
+  if (metrics.estimatedCostUsd !== null) return metrics
+  const model = metrics.model.toLowerCase()
+  const isLuna = model.includes('gpt-5.6-luna') || model.includes('gpt-5_6-luna')
+  if (!isLuna) return metrics
+  const cost = (metrics.inputTokens / 1_000_000) * 0.2
+    + (metrics.cachedInputTokens / 1_000_000) * 0.02
+    + (metrics.outputTokens / 1_000_000) * 1.2
+  return { ...metrics, estimatedCostUsd: cost, costSource: 'estimated' }
+}
+
+async function storedOpenCodeUsage(output: string, model: string, durationMs: number): Promise<UsageMetrics | undefined> {
+  const ids = sessionIds(output)
+  if (!ids.length || process.env.OPENCODE_ATTACH_URL?.trim()) return undefined
+  const quotedIds = ids.map((id) => `'${id.replace(/'/g, "''")}'`).join(', ')
+  const query = `SELECT COALESCE(SUM(cost), 0) AS cost, COALESCE(SUM(tokens_input), 0) AS input_tokens, COALESCE(SUM(tokens_output), 0) AS output_tokens, COALESCE(SUM(tokens_reasoning), 0) AS reasoning_tokens, COALESCE(SUM(tokens_cache_read), 0) AS cached_input_tokens FROM session WHERE id IN (${quotedIds})`
+  try {
+    const raw = await runCapture('opencode', ['db', query, '--format', 'json'], root)
+    const row = jsonObjects(raw)[0]
+    if (!row) return undefined
+    const inputTokens = numeric(row.input_tokens) ?? 0
+    const cachedInputTokens = numeric(row.cached_input_tokens) ?? 0
+    const outputTokens = numeric(row.output_tokens) ?? 0
+    const reasoningTokens = numeric(row.reasoning_tokens) ?? 0
+    const cost = numeric(row.cost, false) ?? 0
+    if (inputTokens + cachedInputTokens + outputTokens + reasoningTokens === 0 && cost === 0) return undefined
+    const event = eventUsage(output, model, durationMs)
+    return {
+      model: event?.model || model,
+      requests: event?.requests || ids.length,
+      inputTokens,
+      cachedInputTokens,
+      outputTokens,
+      reasoningTokens,
+      totalTokens: event?.totalTokens || inputTokens + outputTokens,
+      estimatedCostUsd: cost,
+      durationMs,
+      costSource: 'opencode',
+    }
+  } catch {
+    return undefined
+  }
+}
+
+function mergeUsage(left: UsageMetrics | undefined, right: UsageMetrics | undefined): UsageMetrics | undefined {
+  if (!right) return left
+  if (!left) return { ...right }
+  const knownCost = left.estimatedCostUsd !== null && right.estimatedCostUsd !== null
+  return {
+    model: right.model || left.model,
+    requests: left.requests + right.requests,
+    inputTokens: left.inputTokens + right.inputTokens,
+    cachedInputTokens: left.cachedInputTokens + right.cachedInputTokens,
+    outputTokens: left.outputTokens + right.outputTokens,
+    reasoningTokens: left.reasoningTokens + right.reasoningTokens,
+    totalTokens: left.totalTokens + right.totalTokens,
+    estimatedCostUsd: knownCost ? left.estimatedCostUsd! + right.estimatedCostUsd! : null,
+    durationMs: left.durationMs + right.durationMs,
+    costSource: knownCost ? 'opencode' : 'unavailable',
+  }
+}
+
+async function runOpenCode(args: string[]) {
+  const startedAt = Date.now()
+  let output: string
+  try {
+    output = await runCapture('opencode', [...args, '--format', 'json'], root)
+  } catch (error) {
+    output = error instanceof CommandError ? error.output : ''
+    const partial = eventUsage(output, process.env.DIBOT_OPENCODE_MODEL?.trim() || 'unknown', Date.now() - startedAt)
+    collectedUsage = mergeUsage(collectedUsage, partial)
+    throw error
+  }
+  const durationMs = Date.now() - startedAt
+  const model = process.env.DIBOT_OPENCODE_MODEL?.trim() || 'openai/gpt-5.6-luna'
+  const usage = estimateCost(await storedOpenCodeUsage(output, model, durationMs) || eventUsage(output, model, durationMs) || {
+    model,
+    requests: 0,
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    totalTokens: 0,
+    estimatedCostUsd: null,
+    durationMs,
+    costSource: 'unavailable',
+  })
+  const usableUsage = usage.requests > 0 || usage.totalTokens > 0 || usage.estimatedCostUsd !== null ? usage : undefined
+  collectedUsage = mergeUsage(collectedUsage, usableUsage)
+  return usableUsage
+}
+
 class JsonApi {
   private readonly baseUrl: string
   private readonly headers: Record<string, string>
@@ -212,14 +414,37 @@ class DibotReporter {
 
   async complete(result: JsonObject) {
     if (!this.jobId) return
-    await this.api.request(`dibot/agent-jobs/${encodeURIComponent(this.jobId)}`, { method: 'PATCH', body: JSON.stringify({ status: 'completed', currentStep: 'App, API, Turso y build verificados', result }) })
+    await this.api.request(`dibot/agent-jobs/${encodeURIComponent(this.jobId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        status: 'completed',
+        currentStep: 'App, API, Turso y build verificados',
+        result: {
+          ...result,
+          runId: this.jobId,
+          model: collectedUsage?.model || process.env.DIBOT_OPENCODE_MODEL || 'unknown',
+          ...(collectedUsage ? { usage: collectedUsage } : {}),
+        },
+      }),
+    })
   }
 
   async fail(error: unknown) {
     if (!this.jobId) return
     const message = error instanceof Error ? error.message : String(error)
     try {
-      await this.api.request(`dibot/agent-jobs/${encodeURIComponent(this.jobId)}`, { method: 'PATCH', body: JSON.stringify({ status: 'failed', currentStep: `Workflow falló: ${redact(message)}` }) })
+      await this.api.request(`dibot/agent-jobs/${encodeURIComponent(this.jobId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          status: 'failed',
+          currentStep: `Workflow falló: ${redact(message)}`,
+          result: {
+            runId: this.jobId,
+            model: collectedUsage?.model || process.env.DIBOT_OPENCODE_MODEL || 'unknown',
+            ...(collectedUsage ? { usage: collectedUsage } : {}),
+          },
+        }),
+      })
     } catch (reportError) {
       console.error(`No se pudo reportar el fallo: ${reportError instanceof Error ? reportError.message : String(reportError)}`)
     }
@@ -348,11 +573,11 @@ async function getSuperPrompt(input: WorkflowInput) {
 async function runInitialAgent(input: WorkflowInput) {
   if (input.mode === 'create') {
     const superPrompt = await getSuperPrompt(input)
-    await run('opencode', [...openCodeBase(), '--agent', 'dibot-fast', `Construye la aplicación completa usando este superprompt:\n\n${superPrompt.content}\n${completeAppContract(input)}`], root)
+    await runOpenCode([...openCodeBase(), '--agent', 'dibot-fast', `Construye la aplicación completa usando este superprompt:\n\n${superPrompt.content}\n${completeAppContract(input)}`])
     return superPrompt.cached
   }
 
-  await run('opencode', [...openCodeBase(), '--agent', 'dibot-fast', `UPDATE MODE. Aplica este cambio sin perder la dirección visual, los datos ni la API existentes. Lee primero references/mobbin/README.md y las referencias visuales guardadas. Si agregas pantallas o cambias la dirección visual, ejecuta una búsqueda Mobbin complementaria una sola vez; si el cambio es solo de datos/API, conserva las referencias sin buscar de nuevo. Inspecciona solo los archivos afectados:\n\n${input.prompt}\n${completeAppContract(input)}`], root)
+  await runOpenCode([...openCodeBase(), '--agent', 'dibot-fast', `UPDATE MODE. Aplica este cambio sin perder la dirección visual, los datos ni la API existentes. Lee primero references/mobbin/README.md y las referencias visuales guardadas. Si agregas pantallas o cambias la dirección visual, ejecuta una búsqueda Mobbin complementaria una sola vez; si el cambio es solo de datos/API, conserva las referencias sin buscar de nuevo. Inspecciona solo los archivos afectados:\n\n${input.prompt}\n${completeAppContract(input)}`])
   return false
 }
 
@@ -387,7 +612,7 @@ async function repairWithDibotFast(input: WorkflowInput, error: unknown, attempt
   const output = error instanceof CommandError ? error.output : error instanceof Error ? error.message : String(error)
   const diagnostic = redact(output).slice(-14_000)
   const instruction = `REPAIR RUN ${attempt}. Tu propia entrega de ${input.appName} aún no pasa la puerta rápida.\n\nFallo exacto:\n${diagnostic}\n\nCorrige únicamente la causa raíz en el archivo afectado. Después ejecuta solo el check relacionado y bun run dibot:verify:fast. No hagas build, no vuelvas a buscar Mobbin, no explores el repositorio completo y no te limites a explicar o recomendar el siguiente paso.${completeAppContract(input)}`
-  await run('opencode', [...openCodeBase(), '--agent', 'dibot-fast', instruction], root)
+  await runOpenCode([...openCodeBase(), '--agent', 'dibot-fast', instruction])
 }
 
 async function main() {
@@ -441,6 +666,7 @@ async function main() {
 
     const openCodeDurationMs = Date.now() - openCodeStartedAt
     const durationMs = Date.now() - startedAt
+    collectedUsage = collectedUsage ? estimateCost(collectedUsage) : undefined
     const result = {
       appId: input.appId,
       appName: input.appName,
@@ -462,10 +688,12 @@ async function main() {
       openCodeDuration: formatDuration(openCodeDurationMs),
       workspace: root,
       externalSteps: ['publicar en GitHub', 'desplegar en Dokploy'],
+      ...(collectedUsage ? { usage: collectedUsage, model: collectedUsage.model, runId: reporter.id } : {}),
     }
     await reporter.complete(result)
     console.log(`\nWorkflow (${input.mode}) terminó correctamente en ${formatDuration(durationMs)}. jobId=${reporter.id}`)
     console.log(JSON.stringify(result, null, 2))
+    if (collectedUsage) console.log(`DIBOT_USAGE_JSON ${JSON.stringify(collectedUsage)}`)
   } catch (error) {
     if (reporter) await reporter.fail(error)
     console.error(`\nWorkflow falló: ${redact(error instanceof Error ? error.message : String(error))}`)
