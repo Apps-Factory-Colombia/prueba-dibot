@@ -29,14 +29,21 @@ if (!hasTables && !hasServerEntry) {
   const tables = tableResult.rows.map((row) => String(row.name))
   if (required && tables.length === 0) throw new Error('Turso conecta, pero la base no contiene tablas de la aplicación.')
 
+  const counts = await Promise.all(tables.map(async (table) => {
+    const escaped = table.replaceAll('"', '""')
+    const countResult = await client.execute(`select count(*) as count from "${escaped}"`)
+    return { table, count: Number(countResult.rows[0]?.count ?? 0) }
+  }))
   if (requireSeed) {
-    for (const table of tables) {
-      const escaped = table.replaceAll('"', '""')
-      const countResult = await client.execute(`select count(*) as count from "${escaped}"`)
-      const count = Number(countResult.rows[0]?.count ?? 0)
-      if (count < 1) throw new Error(`Seed incompleto: la tabla ${table} está vacía.`)
-    }
+    // Empty transactional tables are valid on a fresh app: appointments,
+    // reservations, order_items and similar tables wait for the first user.
+    // The old all-tables rule rejected healthy apps. Only fail when the seed
+    // produced no rows at all; report empty tables as diagnostics.
+    const totalRows = counts.reduce((sum, item) => sum + item.count, 0)
+    if (totalRows < 1) throw new Error('Seed incompleto: ninguna tabla contiene datos iniciales.')
+    const emptyTables = counts.filter((item) => item.count === 0).map((item) => item.table)
+    if (emptyTables.length > 0) console.log(`[turso] Tablas vacías permitidas para datos transaccionales: ${emptyTables.join(', ')}.`)
   }
 
-  console.log(`[turso] Conexión verificada para ${databaseId}; ${tables.length} tabla(s)${requireSeed ? ' con datos' : ''}.`)
+  console.log(`[turso] Conexión verificada para ${databaseId}; ${tables.length} tabla(s)${requireSeed ? ' con seed inicial válido' : ''}.`)
 }

@@ -38,6 +38,8 @@ const endpoint = required('ENDPOINT_S3')
 const accessKeyId = required('R2_ACCESS_KEY_ID')
 const secretAccessKey = required('R2_SECRET_ACCESS_KEY')
 const bucket = process.env.R2_BUCKET?.trim() || 'dibot'
+const appId = required('DIBOT_APP_ID')
+const appName = process.env.DIBOT_APP_NAME?.trim() || 'Dibot App'
 const prefix = storagePrefix()
 const configuredAuthSessionSecret = process.env.AUTH_SESSION_SECRET?.trim()
 const agentToken = process.env.DIBOT_AGENT_API_TOKEN?.trim()
@@ -54,6 +56,7 @@ const metadata = {
 const client = new S3Client({
   region: 'auto',
   endpoint,
+  forcePathStyle: true,
   credentials: { accessKeyId, secretAccessKey },
   // Cloudflare R2 signs the S3 request itself; optional AWS checksum
   // headers can make PutObject signatures incompatible with R2.
@@ -65,9 +68,9 @@ await client.send(new HeadBucketCommand({ Bucket: bucket }))
 await client.send(new PutObjectCommand({
   Bucket: bucket,
   Key: `${prefix}/.dibot-storage.json`,
-  Body: JSON.stringify({ appId: process.env.DIBOT_APP_ID, appName: process.env.DIBOT_APP_NAME, createdAt: new Date().toISOString() }),
+  Body: JSON.stringify({ appId, appName, createdAt: new Date().toISOString() }),
   ContentType: 'application/json',
-  ...(Object.keys(metadata).length > 0 ? { Metadata: metadata } : {}),
+  Metadata: metadata,
 }))
 
 const values = {
