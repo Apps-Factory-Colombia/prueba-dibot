@@ -9,6 +9,7 @@
     "dev:web": "bun node_modules/vite/bin/vite.js",
     "dev:api": "bun --watch api/index.ts",
     "build": "bun scripts/build.ts",
+    "build:wrapper": "bun scripts/build-wrapper.ts",
     "build:app": "bun node_modules/vite/bin/vite.js build",
     "build:server": "bun scripts/build-esbuild.ts",
     "analyze": "bun scripts/analyze-bundles.ts",

@@ -1,7 +1,7 @@
 import { config as loadEnv } from 'dotenv'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 loadEnv()
@@ -645,8 +645,33 @@ async function applyAppMetadata(input: WorkflowInput) {
 
   await mkdir(join(root, '.dibot-runtime'), { recursive: true })
   await writeFile(join(root, '.dibot-runtime', 'app.json'), `${JSON.stringify({ userId: input.userId, appId: input.appId, appName: input.appName, mode: input.mode }, null, 2)}\n`, 'utf8')
+  await ensureProjectContext(input)
   process.env.DIBOT_APP_ID = input.appId
   process.env.DIBOT_APP_NAME = input.appName
+}
+
+async function ensureProjectContext(input: WorkflowInput) {
+  const writeIfMissing = async (file: string, content: string) => {
+    try {
+      await access(join(root, file))
+    } catch {
+      await writeFile(join(root, file), content, 'utf8')
+    }
+  }
+  if (input.mode === 'create') {
+    await writeFile(join(root, 'APP_MANIFEST.md'), `# App Manifest\n\n- Nombre: ${input.appName}\n- Tipo: pendiente de clasificar por Dibot.\n- Audiencia: pendiente.\n- Pedido inicial: ${input.prompt}\n\n## Funciones\n- Pendientes de extraer del pedido.\n\n## Rutas, entidades, roles e integraciones\n- Definir con Turso, R2 y auth existentes.\n`, 'utf8')
+    await writeFile(join(root, 'DESIGN_BRIEF.md'), `# Design Brief\n\nEstado: vacío; en create realiza una sola búsqueda de Mobbin y documenta aquí las decisiones.\n\n- Producto y tono: pendiente.\n- Navegación móvil: pendiente.\n- Layout, cards, formularios, spacing y CTAs: pendiente.\n- Color, tipografía, radios, sombras y movimiento: pendiente.\n`, 'utf8')
+  } else {
+    await writeIfMissing('APP_MANIFEST.md', '# App Manifest\n\nConserva la estructura existente y documenta solo el cambio actual.\n')
+    await writeIfMissing('DESIGN_BRIEF.md', '# Design Brief\n\nReutiliza la dirección visual existente.\n')
+  }
+  await writeIfMissing('PROJECT_STATE.md', '# Project State\n\nEstado inicial recuperado; actualiza este archivo al terminar.\n')
+}
+
+async function updateProjectState(input: WorkflowInput) {
+  const status = await runCapture('git', ['status', '--short'], root)
+  const changedFiles = status.split(/\r?\n/).map((line) => line.trim().slice(3)).filter(Boolean).slice(0, 80)
+  await writeFile(join(root, 'PROJECT_STATE.md'), `# Project State\n\n- Última operación: ${input.mode}\n- App: ${input.appName}\n- Última validación: ${new Date().toISOString()}\n- Build: válido\n- Base: ${process.env.TURSO_DATABASE_ID || 'persistente por app'}\n- Storage: ${process.env.STORAGE_PREFIX || 'namespace persistente por app'}\n\n## Archivos modificados\n${changedFiles.length ? changedFiles.map((file) => `- ${file}`).join('\n') : '- Sin cambios listados'}\n\n## Decisión\nSe conserva la arquitectura móvil, auth, Turso, R2 y las rutas existentes.\n`, 'utf8')
 }
 
 async function prepareDatabase(input: WorkflowInput) {
@@ -679,6 +704,20 @@ async function prepareStorage(input: WorkflowInput) {
 }
 
 function completeAppContract(input: WorkflowInput) {
+  const visualRule = input.mode === 'create'
+    ? 'En CREATE, usa una sola búsqueda de Mobbin si DESIGN_BRIEF.md aún no tiene referencias; guarda el brief y continúa.'
+    : 'En UPDATE, reutiliza DESIGN_BRIEF.md; solo consulta Mobbin si el usuario pide un rediseño.'
+  return `
+CONTEXTO COMPACTO DE DIBOT
+- Lee AGENTS.md, APP_MANIFEST.md, DESIGN_BRIEF.md y PROJECT_STATE.md antes de editar.
+- App: "${input.appName}". Pedido: "${input.prompt}"
+- ${visualRule}
+- Mantén la app móvil, funcional y en español. Reutiliza auth, Turso, R2, navegación y primitives existentes.
+- En UPDATE modifica solo los archivos afectados y conserva datos, rutas y comportamiento existente.
+- No leas node_modules, no uses Git, no publiques, no despliegues y no muestres secretos.
+- Ejecuta el build una sola vez al finalizar y deja un resumen compacto en PROJECT_STATE.md.
+`
+  /*
   const previewOnly = process.env.DIBOT_PREVIEW_ONLY === '1'
   const visualResearchRule = previewOnly
     ? '- PREVIEW MODE: prioriza una entrega funcional y rápida. No hagas búsquedas externas ni uses Mobbin; trabaja únicamente con los archivos del repositorio actual.'
@@ -707,6 +746,7 @@ ${updateVisualRule}
 - dibot:verify:fast exige contratos, TypeScript de frontend y servidor, y ESLint. dibot:verify:release añade DB, Vite, esbuild, health runtime y smoke test.
 - Trabaja solo en el repositorio actual. No clones, no uses Git, no publiques, no despliegues y no leas ni muestres el contenido de .env.
 `
+  */
 }
 
 async function getSuperPrompt(input: WorkflowInput) {
@@ -807,6 +847,7 @@ async function main() {
         ensureWorkflowTime()
         await reporter.update(`Verificando DB, API, esbuild y frontend (intento ${repairRuns + 1})`)
         await verifyFunctionalApp(input)
+        await updateProjectState(input)
         break
       } catch (verificationError) {
         const category = classifyError(verificationError)
