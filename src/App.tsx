@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent } from 'react'
+import type { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent, SyntheticEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { ArrowLeft, ArrowRight, BadgeCheck, Check, ChevronRight, Compass, CreditCard, Flower2, Gem, Gift, Heart, ImagePlus, LogOut, MapPin, MessageCircle, MessageSquare, Pencil, Plane, Search, Send, ShieldCheck, Shirt, ShoppingBag, Sparkles, UserRound, WalletCards, X } from 'lucide-react'
 import { ApiError, apiRequest, photoFor, type BackendUser, type Offer } from './lib/api'
@@ -12,12 +12,19 @@ type ChatMessage = { id: string; matchId: string; senderId: string; body: string
 type SupportMessage = { id: string; userId: string; senderRole: 'admin' | 'user'; body: string; createdAt: string }
 const imageFileNamePattern = /\.(apng|avif|bmp|gif|heic|heif|jpe?g|jfif|png|svgz?|tiff?|webp)$/i
 
+function fallbackImageToPng(event: SyntheticEvent<HTMLImageElement>) {
+  const image = event.currentTarget
+  if (image.dataset.fallback === 'png') return
+  image.dataset.fallback = 'png'
+  image.src = image.src.replace(/\.webp(?=([?#]|$))/i, '.png')
+}
+
 function Brand({ compact = false }: { compact?: boolean }) {
-  return <div className={compact ? 'brand brand--compact' : 'brand'}><img src="/sugar-daddy-lockup-clean.png" alt="Sugar Daddy" /></div>
+  return <div className={compact ? 'brand brand--compact' : 'brand'}><img src="/sugar-daddy-lockup-transparent.png" alt="Sugar Daddy" fetchPriority="high" decoding="async" /></div>
 }
 
 function Welcome({ onStart }: { onStart: () => void }) {
-  return <main className="public-screen public-screen--welcome"><section className="welcome-card"><div className="welcome-photo"><img src="/sugar-daddy-hero-couple.png" alt="Pareja adulta sonriendo" /><div className="welcome-photo__shade" /><div className="welcome-head"><Brand /><span className="age-pill"><ShieldCheck size={13} /> +18</span></div></div><div className="welcome-content"><h1>Busca, Conecta y haz acuerdos económicos</h1><div className="welcome-phrases"><span><i className="phrase-emoji" aria-hidden="true">💎</i> ¿Y tú ya tienes un novio millonario?</span><span><i className="phrase-emoji" aria-hidden="true">🎁</i> Recibe regalos y canjéalos por dinero en efectivo</span><span><i className="phrase-emoji" aria-hidden="true">✈️</i> Viaja por el mundo con tu sugar daddy</span><span><i className="phrase-emoji" aria-hidden="true">💬</i> Chatea, diviértete y haz dinero</span></div><button className="button button--primary button--wide" onClick={onStart}>Crear mi perfil <ArrowRight size={18} /></button><small className="privacy-line"><ShieldCheck size={14} /> Comunidad para mayores de 18 años.</small></div></section></main>
+  return <main className="public-screen public-screen--welcome"><section className="welcome-card"><div className="welcome-photo"><img src="/sugar-daddy-hero-couple.webp" alt="Pareja adulta sonriendo" loading="eager" fetchPriority="high" decoding="async" onError={fallbackImageToPng} /><div className="welcome-photo__shade" /><div className="welcome-head"><Brand /><span className="age-pill"><ShieldCheck size={13} /> +18</span></div></div><div className="welcome-content"><h1>Busca, Conecta y haz acuerdos económicos</h1><div className="welcome-phrases"><span><i className="phrase-emoji" aria-hidden="true">💎</i> ¿Y tú ya tienes un novio millonario?</span><span><i className="phrase-emoji" aria-hidden="true">🎁</i> Recibe regalos y canjéalos por dinero en efectivo</span><span><i className="phrase-emoji" aria-hidden="true">✈️</i> Viaja por el mundo con tu sugar daddy</span><span><i className="phrase-emoji" aria-hidden="true">💬</i> Chatea, diviértete y haz dinero</span></div><button className="button button--primary button--wide" onClick={onStart}>Crear mi perfil <ArrowRight size={18} /></button><small className="privacy-line"><ShieldCheck size={14} /> Comunidad para mayores de 18 años.</small></div></section></main>
 }
 
 function Auth({ onRegister, onLogin }: { onRegister: (credentials: AuthCredentials) => void; onLogin: (credentials: AuthCredentials) => void }) {
@@ -45,7 +52,29 @@ function Auth({ onRegister, onLogin }: { onRegister: (credentials: AuthCredentia
       setCheckingEmail(false)
     }
   }
-  return <main className="form-screen"><header className="simple-header"><Brand compact /><span className="age-pill"><ShieldCheck size={13} /> +18</span></header><section className="auth-hero"><img src="/sugar-daddy-auth-daddy.png" alt="Sugar daddy adulto sonriendo" /><div className="auth-hero__shade" /></section><section className="form-card"><div className="segmented"><button type="button" className={mode === 'register' ? 'is-active' : ''} onClick={() => { setMode('register'); setError('') }}>Crear cuenta</button><button type="button" className={mode === 'login' ? 'is-active' : ''} onClick={() => { setMode('login'); setError('') }}>Iniciar sesión</button></div><div className="form-heading"><h2>{mode === 'register' ? 'Comienza con tu correo y crea una nueva contraseña' : 'Qué gusto verte'}</h2></div><form className="form-stack" onSubmit={submit}><label className="field-label">Correo electrónico<input className="text-input" type="email" value={email} onChange={(event) => { setEmail(event.target.value); if (error) setError('') }} placeholder="tu@correo.com" autoFocus /></label><label className="field-label">Contraseña<input className="text-input" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Mínimo 8 caracteres" /></label>{error && <p className="form-error">{error}</p>}<button className="button button--primary button--wide" type="submit" disabled={checkingEmail}>{checkingEmail ? 'Validando correo…' : mode === 'register' ? 'Continuar' : 'Entrar'} {!checkingEmail && <ArrowRight size={18} />}</button></form><div className="auth-footnote"><ShieldCheck size={15} /><span>Tus datos se mantienen privados y seguros.</span></div></section></main>
+  return (
+    <main className="form-screen">
+      <header className="simple-header"><Brand compact /><span className="age-pill"><ShieldCheck size={13} /> +18</span></header>
+      <section className="auth-hero">
+        <img src="/sugar-daddy-auth-daddy.webp" alt="Sugar daddy adulto sonriendo" loading="eager" fetchPriority="high" decoding="async" onError={fallbackImageToPng} />
+        <div className="auth-hero__shade" />
+      </section>
+      <section className="form-card">
+        <div className="segmented">
+          <button type="button" className={mode === 'register' ? 'is-active' : ''} onClick={() => { setMode('register'); setError('') }}>Crear cuenta</button>
+          <button type="button" className={mode === 'login' ? 'is-active' : ''} onClick={() => { setMode('login'); setError('') }}>Iniciar sesión</button>
+        </div>
+        <div className="form-heading"><h2>{mode === 'register' ? 'Comienza con tu correo y crea una nueva contraseña' : 'Qué gusto verte'}</h2></div>
+        <form className="form-stack" onSubmit={submit}>
+          <label className="field-label">Correo electrónico<input className="text-input" type="email" value={email} onChange={(event) => { setEmail(event.target.value); if (error) setError('') }} placeholder="tu@correo.com" /></label>
+          <label className="field-label">Contraseña<input className="text-input" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Mínimo 8 caracteres" /></label>
+          {error && <p className="form-error">{error}</p>}
+          <button className="button button--primary button--wide" type="submit" disabled={checkingEmail}>{checkingEmail ? 'Validando correo…' : mode === 'register' ? 'Continuar' : 'Entrar'} {!checkingEmail && <ArrowRight size={18} />}</button>
+        </form>
+        <div className="auth-footnote"><ShieldCheck size={15} /><span>Tus datos se mantienen privados y seguros.</span></div>
+      </section>
+    </main>
+  )
 }
 
 function Setup({ credentials, onComplete }: { credentials: AuthCredentials; onComplete: (user: BackendUser, offer?: Offer) => void }) {
@@ -306,7 +335,7 @@ function Discover({ onOffer, onMatch, onProfile }: { onOffer: (offer: Offer) => 
       </div>
       <div className="decision-row"><button className="decision decision--pass" onClick={() => animateDecision('pass')} aria-label="Pasar" disabled={leaving}><X size={25} /></button><button className="decision decision--like" onClick={() => animateDecision('like')} aria-label="Me gusta" disabled={leaving}><Heart size={27} fill="currentColor" /></button></div>
       <p className="swipe-hint">Desliza la tarjeta para decidir</p>
-    </> : <div className="discover-empty"><div className="discover-empty__visual"><span className="discover-empty__halo" /><img className="discover-empty__photo discover-empty__photo--back" src="/sugar-daddy-hero-man.png" alt="" /><img className="discover-empty__photo" src="/sugar-daddy-hero-woman.png" alt="" /><span className="discover-empty__spark">✦</span></div><div className="discover-empty__copy"><span className="empty-kicker">TODO LISTO POR HOY</span><h2>Pronto tendrás nuevas conexiones</h2><p>Regresa mañana para conocer nuevos usuarios</p></div><button className="outline-button" onClick={onProfile}>Mejorar mi perfil <ArrowRight size={16} /></button></div>}
+    </> : <div className="discover-empty"><div className="discover-empty__visual"><span className="discover-empty__halo" /><img className="discover-empty__photo discover-empty__photo--back" src="/sugar-daddy-hero-man.webp" alt="" decoding="async" onError={fallbackImageToPng} /><img className="discover-empty__photo" src="/sugar-daddy-hero-woman.webp" alt="" decoding="async" onError={fallbackImageToPng} /><span className="discover-empty__spark">✦</span></div><div className="discover-empty__copy"><span className="empty-kicker">TODO LISTO POR HOY</span><h2>Pronto tendrás nuevas conexiones</h2><p>Regresa mañana para conocer nuevos usuarios</p></div><button className="outline-button" onClick={onProfile}>Mejorar mi perfil <ArrowRight size={16} /></button></div>}
     <p className="safe-note"><ShieldCheck size={14} /> Tu información se maneja de forma privada.</p>
   </section>
 }

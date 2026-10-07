@@ -1605,7 +1605,20 @@ select {
 /* Keep the same compact, transparent logo lockup on welcome and sign-in. */
 .public-screen--welcome .welcome-photo .welcome-head .brand img,
 .form-screen .simple-header .brand img {
-  width: 112px;
+  width: 132px;
   max-height: none;
+}
+
+.public-screen--welcome .welcome-photo .brand img {
   filter: drop-shadow(0 1px 3px rgba(5, 35, 58, .2));
+}
+
+.form-screen .simple-header .brand img {
+  filter: drop-shadow(0 0 2px rgba(255, 255, 255, .98)) drop-shadow(0 0 6px rgba(255, 255, 255, .78));
+}
+
+/* Show a deliberate fallback while the compressed local hero photos decode. */
+.welcome-photo,
+.auth-hero {
+  background: linear-gradient(135deg, #d9e9f2 0%, #9eb8c9 48%, #285273 100%);
 }
