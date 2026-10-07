@@ -23,8 +23,20 @@ function stop() {
   }
 }
 
+async function apiAlreadyRunning() {
+  try {
+    const response = await fetch('http://127.0.0.1:3001/healthz')
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
 process.once('SIGINT', stop)
 process.once('SIGTERM', stop)
 
-if (existsSync('api/index.ts')) start(['--watch', 'api/index.ts'])
+if (existsSync('api/index.ts')) {
+  if (await apiAlreadyRunning()) console.log('[dev] API existente detectada en http://127.0.0.1:3001; se reutiliza.')
+  else start(['--watch', 'api/index.ts'])
+}
 start(['node_modules/vite/bin/vite.js'])

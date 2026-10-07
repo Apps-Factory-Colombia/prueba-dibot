@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import { HeadBucketCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import { CreateBucketCommand, HeadBucketCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { createHash, randomBytes } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
 
@@ -66,7 +66,18 @@ const client = new S3Client({
   responseChecksumValidation: 'WHEN_REQUIRED',
 })
 
-await client.send(new HeadBucketCommand({ Bucket: bucket }))
+try {
+  await client.send(new HeadBucketCommand({ Bucket: bucket }))
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error)
+  const status = typeof error === 'object' && error !== null && '$metadata' in error
+    ? Number((error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode)
+    : undefined
+  if (status !== 404 && !/not.?found|nosuchbucket|404/i.test(message)) throw error
+  await client.send(new CreateBucketCommand({ Bucket: bucket }))
+  await client.send(new HeadBucketCommand({ Bucket: bucket }))
+  console.log(`[storage] Bucket R2 creado: ${bucket}.`)
+}
 await client.send(new PutObjectCommand({
   Bucket: bucket,
   Key: `${prefix}/.dibot-storage.json`,
@@ -80,6 +91,10 @@ const values = {
   STORAGE_ENDPOINT: endpoint,
   STORAGE_BUCKET: bucket,
   STORAGE_PREFIX: prefix,
+  ENDPOINT_S3: endpoint,
+  R2_BUCKET: bucket,
+  R2_ACCESS_KEY_ID: accessKeyId,
+  R2_SECRET_ACCESS_KEY: secretAccessKey,
   AUTH_SESSION_SECRET: authSessionSecret,
   ...(process.env.R2_PUBLIC_URL?.trim() ? { STORAGE_PUBLIC_URL: process.env.R2_PUBLIC_URL.trim() } : {}),
 }

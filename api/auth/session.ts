@@ -15,7 +15,11 @@ export type Session = SessionUser & {
   expiresAt: number
 }
 
-const defaultSessionTtlSeconds = 60 * 60 * 24 * 7
+// Persistent sign-in: sessions do not expire during normal use. The ten-year
+// limit keeps the cookie compatible with browsers while logout remains the
+// explicit way to end a session.
+const defaultSessionTtlSeconds = 60 * 60 * 24 * 365 * 10
+const maxSessionTtlSeconds = defaultSessionTtlSeconds
 const cookieName = 'dibot_session'
 
 function requiredSecret(): string {
@@ -41,7 +45,7 @@ function signature(payload: string): string {
 
 function ttlSeconds(): number {
   const value = Number(process.env.AUTH_SESSION_TTL_SECONDS ?? defaultSessionTtlSeconds)
-  return Number.isFinite(value) && value >= 300 ? Math.min(Math.floor(value), 60 * 60 * 24 * 30) : defaultSessionTtlSeconds
+  return Number.isFinite(value) && value >= 300 ? Math.min(Math.floor(value), maxSessionTtlSeconds) : defaultSessionTtlSeconds
 }
 
 function cookieHeader(value: string, maxAge: number): string {

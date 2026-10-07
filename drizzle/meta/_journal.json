@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1790733069785,
+      "tag": "0000_amusing_shinobi_shaw",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1791337462695,
+      "tag": "0001_thick_bullseye",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791401622982,
+      "tag": "0002_add_user_country",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1791402471393,
+      "tag": "0003_registration_leads",
+      "breakpoints": true
+    }
+  ]
+}

@@ -19,6 +19,8 @@ dist-ssr
 .dibot-workspaces/
 .dibot-test-template/
 .dibot-superprompt.txt
+.codex-smoke.sqlite
+.codex-smoke-storage/
 
 # Editor directories and files
 .vscode/*

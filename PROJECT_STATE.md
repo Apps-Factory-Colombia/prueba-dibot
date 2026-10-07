@@ -2,9 +2,12 @@
 
 Estado compacto de la última operación válida. Dibot debe actualizarlo al terminar un create/update.
 
-- Última operación: plantilla inicial.
-- Último build válido: pendiente.
-- Archivos importantes: `src/App.tsx`, `api/index.ts`, `api/db/schema.ts`, `api/db/seed.ts`.
-- Estado de base: Turso por app; revisar `TURSO_DATABASE_ID`.
-- Estado de storage: R2 por app; revisar `STORAGE_PREFIX`.
-- Decisiones pendientes: completar durante la primera implementación.
+- Última operación: Stripe Checkout conserva activación únicamente mediante webhook firmado. El retorno con éxito que sigue pendiente ya no vuelve a abrir automáticamente la oferta de pago durante esa sesión; la pantalla aclara que el regreso no confirma el cobro y recomienda no pagar de nuevo hasta revisar la confirmación. El bloqueo se mantiene en `sessionStorage` para cubrir recargas de la pestaña y se elimina al iniciar sesión con una cuenta activa o cerrar sesión. `.env` tiene configuración de test; no se leyeron ni compartieron secretos.
+- Revisión de datos: el propietario confirma que la BD Turso remota es producción. Hay 10 perfiles activos sugar-baby y 13 sugar-daddy, todos con tres fotos. La cuenta más reciente es hombre, 25 años, `pending_payment` sin `paid_at`; por la regla de producto no puede descubrir perfiles hasta que el webhook confirme el pago. No se insertaron perfiles ficticios en producción: además de no ser cuentas reales, no resolverían el bloqueo de pago.
+- Validación: `bun run build` y `bun run lint` completados; el API local responde health. El entorno local apunta a la BD Turso de producción y Stripe está en modo test. Una sesión Checkout de prueba aparece como pagada en Stripe, pero no hay evento webhook correspondiente en `payment_events`; la clave test configurada tampoco ve destinos registrados en `v1/webhook_endpoints` ni en `v2/core/event_destinations`. Por eso la cuenta sigue pendiente. No se reconcilia ni activa esa compra de prueba contra producción. No apuntar Stripe de pruebas a la BD de producción: un webhook de prueba podría activar cuentas reales sin un cobro real.
+- Archivos importantes: `src/App.tsx`, `src/styles.css`, `src/lib/api.ts`, `api/index.ts`, `api/notifications.ts`, `api/db/schema.ts`, `.env.example`, `STRIPE_TESTING.md`.
+- Estado de base: migraciones `drizzle/0002_add_user_country.sql` y `drizzle/0003_registration_leads.sql` generadas; la última crea la tabla que conserva solo hashes de email, inicio y última actividad. No se aplicaron a la base remota: la verificación anterior de Turso respondió HTTP 502 y el endpoint local de validación de email dio HTTP 500 antes de llegar al onboarding.
+- Estado de storage: bucket R2 dedicado `sugar-daddy-assets`, con namespace `apps/sugar-daddy-e7954a7ca7`; el desarrollo puede usar `STORAGE_PROVIDER=local` y producción usa las credenciales R2 configuradas en `.env.storage`.
+- Integraciones: Stripe Checkout mensual con tarjeta y webhook firmado en `/api/webhooks/stripe`; configuración local documentada en `STRIPE_TESTING.md`. Notificaciones semanales mediante `scripts/weekly-notifications.ts`.
+- Acceso administrador: `/admin`, protegido por `ADMIN_EMAIL` y `ADMIN_PASSWORD_HASH` o `ADMIN_PASSWORD` de servidor.
+- Regla de acceso: hombres de 35+ activos gratis; hombres menores de 35 requieren plan; mujeres pueden descubrir 10 perfiles y enviar un mensaje antes de la oferta.

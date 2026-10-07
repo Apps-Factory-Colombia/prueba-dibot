@@ -1,0 +1,1 @@
+ALTER TABLE `users` ADD `country` text DEFAULT '' NOT NULL;

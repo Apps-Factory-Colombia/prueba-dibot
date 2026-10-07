@@ -1,6 +1,9 @@
-import 'dotenv/config'
+import { config as loadEnv } from 'dotenv'
 import { access, readFile } from 'node:fs/promises'
 import { createClient } from '@libsql/client'
+
+loadEnv()
+loadEnv({ path: '.env.turso', override: true })
 
 async function exists(path: string) {
   try { await access(path); return true } catch { return false }
@@ -28,6 +31,24 @@ if (!hasTables && !hasServerEntry) {
   const tableResult = await client.execute("select name from sqlite_schema where type = 'table' and name not like 'sqlite_%' and name != '__drizzle_migrations' order by name")
   const tables = tableResult.rows.map((row) => String(row.name))
   if (required && tables.length === 0) throw new Error('Turso conecta, pero la base no contiene tablas de la aplicación.')
+
+  const requiredColumns: Record<string, string[]> = {
+    users: ['id', 'email', 'password_hash', 'role', 'profile_identity', 'name', 'age', 'country', 'city', 'bio', 'occupation', 'salary', 'economic_activity', 'status', 'plan', 'created_at', 'updated_at', 'paid_at'],
+    registration_leads: ['email_hash', 'started_at', 'last_seen_at'],
+  }
+  const schemaIssues: string[] = []
+  for (const [table, expectedColumns] of Object.entries(requiredColumns)) {
+    if (!tables.includes(table)) {
+      schemaIssues.push(`falta la tabla ${table}`)
+      continue
+    }
+    const escaped = table.replaceAll('"', '""')
+    const info = await client.execute(`pragma table_info("${escaped}")`)
+    const actualColumns = new Set(info.rows.map((column) => String(column.name)))
+    const missingColumns = expectedColumns.filter((column) => !actualColumns.has(column))
+    if (missingColumns.length) schemaIssues.push(`${table}: faltan columnas ${missingColumns.join(', ')}`)
+  }
+  if (schemaIssues.length) throw new Error(`Esquema de Turso incompleto: ${schemaIssues.join('; ')}. Ejecuta bun run db:migrate.`)
 
   const counts = await Promise.all(tables.map(async (table) => {
     const escaped = table.replaceAll('"', '""')

@@ -7,11 +7,20 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
-import { requireAuth } from '../auth/session'
+import { config as loadEnv } from 'dotenv'
+import { requireAuth } from '../auth/session.ts'
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import sharp from 'sharp'
+
+// R2 credentials are generated in .env.storage. Load that file after the
+// general .env so a long-running/restarted local API cannot keep stale S3
+// credentials while the bucket configuration has already been rotated.
+loadEnv()
+if (process.env.DIBOT_PREVIEW_BUNDLE !== '1') {
+  loadEnv({ path: '.env.storage', override: true })
+}
 
 export type StorageVisibility = 'public' | 'private'
 
@@ -86,8 +95,8 @@ function asBuffer(body: Uint8Array | ArrayBuffer): Buffer {
 }
 
 function maxFileSizeBytes(): number {
-  const configured = Number(env('STORAGE_MAX_FILE_SIZE_BYTES') ?? 15 * 1024 * 1024)
-  return Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : 15 * 1024 * 1024
+  const configured = Number(env('STORAGE_MAX_FILE_SIZE_BYTES') ?? 50 * 1024 * 1024)
+  return Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : 50 * 1024 * 1024
 }
 
 function allowedContentTypes(): Set<string> {
@@ -112,6 +121,12 @@ function safeSegment(value: string): string {
 function storagePrefix(): string {
   const configured = env('STORAGE_PREFIX')
   if (configured) return safeKey(configured)
+  // The current Dibot preview gateway predates STORAGE_PREFIX in its runtime
+  // bridge. Keep this app's existing R2 namespace reachable until that
+  // gateway is upgraded; normal deployments still use the configured value.
+  if (process.env.DIBOT_PREVIEW_BUNDLE === '1' && env('DIBOT_APP_NAME') === 'Sugar Daddy') {
+    return 'apps/sugar-daddy-e7954a7ca7'
+  }
   return `apps/${safeSegment(env('DIBOT_APP_NAME') ?? 'dibot-app')}-${safeSegment(env('DIBOT_APP_ID') ?? 'local')}`
 }
 
@@ -138,7 +153,7 @@ function cleanMetadata(metadata: Record<string, string> | undefined): Record<str
 export function validateUpload(input: Pick<StorageUploadInput, 'body' | 'contentType' | 'fileName'>): void {
   const contentType = input.contentType.trim().toLowerCase()
   const size = input.body instanceof ArrayBuffer ? input.body.byteLength : input.body.byteLength
-  if (!contentType || !allowedContentTypes().has(contentType)) {
+  if (!contentType || (!allowedContentTypes().has(contentType) && !contentType.startsWith('image/'))) {
     throw new Error(`Tipo de archivo no permitido: ${contentType || 'desconocido'}.`)
   }
   if (size <= 0) throw new Error('El archivo está vacío.')
@@ -160,15 +175,20 @@ function metadataForObject(input: StorageUploadInput, createdAt: string, thumbna
 
 async function buildThumbnail(body: Buffer, contentType: string, options: ThumbnailOptions): Promise<Buffer | undefined> {
   if (!contentType.startsWith('image/') || contentType === 'image/svg+xml') return undefined
-  return await sharp(body)
-    .resize({
-      width: Math.max(64, Math.min(2_000, options.width ?? 480)),
-      height: Math.max(64, Math.min(2_000, options.height ?? 480)),
-      fit: 'inside',
-      withoutEnlargement: true,
-    })
-    .webp({ quality: Math.max(40, Math.min(95, options.quality ?? 82)) })
-    .toBuffer()
+  try {
+    return await sharp(body)
+      .resize({
+        width: Math.max(64, Math.min(2_000, options.width ?? 480)),
+        height: Math.max(64, Math.min(2_000, options.height ?? 480)),
+        fit: 'inside',
+        withoutEnlargement: true,
+      })
+      .webp({ quality: Math.max(40, Math.min(95, options.quality ?? 82)) })
+      .toBuffer()
+  } catch {
+    // Keep the original image even when the optional thumbnail decoder does not support its format.
+    return undefined
+  }
 }
 
 function localRoot(): string {
@@ -265,11 +285,15 @@ let s3Config: S3Config | undefined
 
 function s3(): S3Config {
   if (!s3Config) {
-    const endpoint = env('STORAGE_ENDPOINT') ?? env('ENDPOINT_S3')
+    // Keep the runtime client aligned with scripts/provision-storage.ts. R2
+    // signs path-style requests consistently for uploads, deletes and URLs.
+    const endpointValue = env('STORAGE_ENDPOINT') ?? env('ENDPOINT_S3')
+    const endpoint = endpointValue?.replace(/\/+$/, '')
     s3Config = {
       client: new S3Client({
         region: 'auto',
         ...(endpoint ? { endpoint } : {}),
+        forcePathStyle: true,
         credentials: {
           accessKeyId: required('R2_ACCESS_KEY_ID'),
           secretAccessKey: required('R2_SECRET_ACCESS_KEY'),
@@ -422,7 +446,7 @@ export async function handleStorageRequest(request: Request): Promise<Response> 
     const object = await storage.read(key)
     if (!object) return new Response('Not found', { status: 404 })
     if (object.visibility !== 'public') await requireAuth(request)
-    return new Response(object.body as unknown as BodyInit, {
+    return new Response(new Blob([Buffer.from(object.body)]), {
       headers: {
         'content-type': object.contentType,
         'cache-control': object.visibility === 'public' ? 'public, max-age=31536000, immutable' : 'private, max-age=0',
