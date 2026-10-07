@@ -373,7 +373,7 @@ async function checkout(request: Request) {
       }],
       metadata: { appUserId: user.id, appPlan: 'launch_49_mxn' },
       subscription_data: { metadata: { appUserId: user.id, appPlan: 'launch_49_mxn' } },
-      success_url: `${baseUrl}/?payment=success`,
+      success_url: `${baseUrl}/?payment=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${baseUrl}/?payment=cancelled`,
     })
     if (!stripeSession.url) throw new Error('Stripe no devolvió una URL de Checkout.')
@@ -398,13 +398,23 @@ async function checkout(request: Request) {
 
 async function billingStatus(request: Request) {
   const session = await requireAuth(request)
-  const user = await findUser(session.userId)
+  let user = await findUser(session.userId)
   if (!user) return json({ error: 'Usuario no encontrado.' }, { status: 404 })
-  const payment = (await db.select({ id: paymentEvents.id }).from(paymentEvents).where(and(
+  const findPaidEvent = () => db.select({ id: paymentEvents.id }).from(paymentEvents).where(and(
     eq(paymentEvents.userId, user.id),
     eq(paymentEvents.provider, 'stripe'),
     eq(paymentEvents.status, 'paid'),
-  )).limit(1))[0]
+  )).limit(1)
+  let payment = (await findPaidEvent())[0]
+
+  if (!payment || user.status !== 'active') {
+    const requestedSessionId = new URL(request.url).searchParams.get('session_id')
+    await reconcilePendingCheckout(user, requestedSessionId)
+    user = await findUser(session.userId)
+    if (!user) return json({ error: 'Usuario no encontrado.' }, { status: 404 })
+    payment = (await findPaidEvent())[0]
+  }
+
   return json({ data: { paid: user.status === 'active' && Boolean(payment), status: user.status } })
 }
 
@@ -420,6 +430,55 @@ function stripeId(value: unknown): string | null {
   if (typeof value === 'string') return value
   if (value && typeof value === 'object' && 'id' in value && typeof value.id === 'string') return value.id
   return null
+}
+
+async function reconcilePendingCheckout(user: typeof users.$inferSelect, requestedSessionId: string | null) {
+  let stripe: Stripe
+  try { stripe = stripeClient() }
+  catch { return }
+
+  const filters = [
+    eq(paymentEvents.userId, user.id),
+    eq(paymentEvents.provider, 'stripe'),
+    eq(paymentEvents.type, 'stripe_checkout_created'),
+    eq(paymentEvents.status, 'pending'),
+  ]
+  if (requestedSessionId) filters.push(eq(paymentEvents.externalId, requestedSessionId))
+  const attempts = await db.select().from(paymentEvents).where(and(...filters)).orderBy(desc(paymentEvents.createdAt)).limit(requestedSessionId ? 1 : 5)
+  const mode = process.env.STRIPE_MODE?.trim().toLowerCase() || (process.env.NODE_ENV === 'production' ? 'live' : 'test')
+
+  for (const attempt of attempts) {
+    if (!attempt.externalId || !/^cs_(test|live)_/.test(attempt.externalId)) continue
+    try {
+      const checkoutSession = await stripe.checkout.sessions.retrieve(attempt.externalId)
+      const references = [checkoutSession.metadata?.appUserId, checkoutSession.client_reference_id].filter((value): value is string => Boolean(value))
+      const belongsToUser = references.length > 0 && references.every((value) => value === user.id)
+      const paid = belongsToUser
+        && checkoutSession.livemode === (mode === 'live')
+        && checkoutSession.status === 'complete'
+        && checkoutSession.mode === 'subscription'
+        && checkoutSession.currency?.toLowerCase() === 'mxn'
+        && checkoutSession.amount_total === launchPriceMxn * 100
+        && ['paid', 'no_payment_required'].includes(checkoutSession.payment_status)
+
+      if (!paid) continue
+
+      const now = new Date()
+      const subscriptionId = stripeId(checkoutSession.subscription)
+      const customerId = stripeId(checkoutSession.customer)
+      await upsertStripeSubscription(user.id, subscriptionId, customerId, 'active', now)
+      await setStripeUserPaid(user.id, true, now)
+      await db.update(paymentEvents).set({
+        status: 'paid',
+        amountMxn: launchPriceMxn,
+        payload: JSON.stringify({ currency: 'mxn', recurring: true, reconciledBy: 'checkout_session', subscriptionId, customerId }),
+      }).where(eq(paymentEvents.id, attempt.id))
+      return
+    } catch {
+      // Webhook processing remains authoritative if Stripe's API is temporarily unavailable.
+      return
+    }
+  }
 }
 
 async function findStripeSubscription(subscriptionId: string) {

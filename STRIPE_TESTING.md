@@ -32,13 +32,15 @@ Para el entorno de pruebas, el destino debe enviar eventos snapshot clásicos a 
 1. Inicia la app con `bun run dev` y registra/inicia sesión con una cuenta que requiera membresía.
 2. Elige **Continuar al pago** para abrir Stripe Checkout.
 3. Prueba una compra aprobada con `4242 4242 4242 4242`, una fecha futura y cualquier CVC de tres dígitos.
-4. Stripe redirige de vuelta. La app consulta el estado y muestra “Cuenta activada” solo después de que el servidor procese la confirmación firmada.
+4. Stripe redirige de vuelta con el ID de la sesión. El servidor consulta esa sesión directamente y valida propietario, modo, moneda, monto y estado; el webhook firmado sigue procesando renovaciones y otros eventos. La app muestra “Cuenta activada” solo tras verificar el pago en Stripe.
 5. En el panel `/admin`, la cuenta debe aparecer como pagada/activa.
+
+Si vuelves a Checkout en `localhost`, el webhook debe estar reenviado con Stripe CLI y su `whsec_` local. Para probar en el dominio publicado, crea el destino en modo test con URL `https://sugar-daddy.dibot.co/api/webhooks/stripe`, carga útil snapshot y el secreto `whsec_` de ese destino configurado en el runtime. La URL por sí sola no cambia el modo Stripe del servidor. Mantén una base Turso de staging para cualquier pago de prueba.
 
 Para probar un rechazo, usa `4000 0000 0000 0002`. Un pago rechazado o cancelado debe dejar la cuenta pendiente; no existe un botón local que pueda activar una compra ficticia.
 
 Para el endpoint webhook de Stripe, selecciona estos eventos: `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `invoice.paid`, `invoice.payment_failed`, `customer.subscription.updated` y `customer.subscription.deleted`. La firma se verifica sobre el cuerpo HTTP original antes de procesar el evento, y los IDs de evento se deduplican. Los eventos de renovación, pago fallido y cancelación también necesitan el webhook; no basta con configurar Checkout.
 
-OXXO no se ofrece en este flujo recurrente inicial; el checkout activo es tarjeta mensual.
+OXXO no se ofrece en este flujo recurrente: Stripe lo admite para pagos de un solo uso, no para suscripciones, así que requeriría diseñar y mostrar una membresía no renovable con vencimiento. Además, Stripe lista el MCC 7273 (Dating/Escort Services) como no compatible con OXXO; confirma la clasificación y elegibilidad con Stripe antes de implementar esa alternativa.
 
 Referencia: [Stripe Checkout y fulfilment](https://docs.stripe.com/checkout/fulfillment), [validación de firmas de webhook](https://docs.stripe.com/webhooks/signature) y [tarjetas de prueba](https://docs.stripe.com/testing).

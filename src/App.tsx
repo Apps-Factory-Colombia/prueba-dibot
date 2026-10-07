@@ -150,20 +150,21 @@ function OfferModal({ offer, onClose, onUserUpdated }: { offer: Offer; onClose: 
   </section></div>, document.body)
 }
 
-function PaymentReturnModal({ result, onClose, onUserUpdated }: { result: 'success' | 'cancelled'; onClose: (confirmed: boolean) => void; onUserUpdated: (user: BackendUser) => void }) {
+function PaymentReturnModal({ result, sessionId, onClose, onUserUpdated }: { result: 'success' | 'cancelled'; sessionId: string | null; onClose: (confirmed: boolean) => void; onUserUpdated: (user: BackendUser) => void }) {
   const [status, setStatus] = useState<'checking' | 'active' | 'pending'>(result === 'cancelled' ? 'pending' : 'checking')
   const [checking, setChecking] = useState(false)
   const refresh = useCallback(async () => {
-    const [response, payment] = await Promise.all([
-      apiRequest<{ data: { user: BackendUser } | null }>('/api/auth/me'),
-      apiRequest<{ data: { paid: boolean } }>('/api/billing/status'),
-    ])
+    const billingStatusUrl = sessionId
+      ? `/api/billing/status?session_id=${encodeURIComponent(sessionId)}`
+      : '/api/billing/status'
+    const payment = await apiRequest<{ data: { paid: boolean } }>(billingStatusUrl)
+    const response = await apiRequest<{ data: { user: BackendUser } | null }>('/api/auth/me')
     const latest = response.data?.user
     if (latest) {
       onUserUpdated(latest)
     }
     return payment.data.paid
-  }, [onUserUpdated])
+  }, [onUserUpdated, sessionId])
 
   useEffect(() => {
     if (result !== 'success') return
@@ -196,7 +197,7 @@ function PaymentReturnModal({ result, onClose, onUserUpdated }: { result: 'succe
     : status === 'active'
       ? 'Stripe confirmó el pago. Ya puedes descubrir perfiles y chatear sin límites.'
       : status === 'pending'
-        ? 'El regreso desde Checkout no confirma el pago. La app espera la confirmación firmada de Stripe. No vuelvas a pagar por ahora; comprueba de nuevo en unos segundos.'
+        ? 'El servidor aún no puede verificar el pago con Stripe. No vuelvas a pagar todavía; comprueba de nuevo en un momento. Si el cobro aparece en tu cuenta y sigue igual, contacta a soporte.'
         : 'Estamos comprobando con el servidor que Stripe haya confirmado el pago.'
 
   return createPortal(<div className="overlay overlay--offer"><section className={result === 'cancelled' ? 'offer-modal payment-success payment-return--cancelled' : 'offer-modal payment-success'} role="dialog" aria-modal="true" aria-labelledby="payment-return-title">
@@ -555,6 +556,7 @@ export default function App() {
     const value = new URLSearchParams(window.location.search).get('payment')
     return value === 'success' || value === 'cancelled' ? value : null
   })
+  const [paymentSessionId] = useState(() => new URLSearchParams(window.location.search).get('session_id'))
   const suppressOfferAfterCheckout = useRef(paymentReturn === 'success' || hasPendingCheckout())
   const [booting, setBooting] = useState(!isAdminPath)
   useEffect(() => {
@@ -598,11 +600,11 @@ export default function App() {
   }
   if (isAdminPath) return <Admin onExit={() => { window.location.href = '/' }} />
   if (booting) return <main className="boot-screen"><Loading label="Abriendo tu espacio" /></main>
-  if (!user && paymentReturn) return <><Welcome onStart={() => setStage('auth')} /><PaymentReturnModal result={paymentReturn} onClose={closePaymentReturn} onUserUpdated={setUser} /></>
+  if (!user && paymentReturn) return <><Welcome onStart={() => setStage('auth')} /><PaymentReturnModal result={paymentReturn} sessionId={paymentSessionId} onClose={closePaymentReturn} onUserUpdated={setUser} /></>
   if (!user && stage === 'welcome') return <Welcome onStart={() => setStage('auth')} />
   if (!user && stage === 'auth') return <Auth onRegister={(value) => { setCredentials(value); setStage('setup') }} onLogin={(value) => void login(value)} />
   if (!user && stage === 'setup' && credentials) return <Setup credentials={credentials} onComplete={(created, registrationOffer) => { setUser(created); if (registrationOffer) setOffer(registrationOffer) }} />
   if (!user) return <Welcome onStart={() => setStage('auth')} />
   const logout = async () => { await apiRequest('/api/auth/logout', { method: 'POST' }).catch(() => undefined); suppressOfferAfterCheckout.current = false; setPendingCheckout(false); setUser(null); setStage('welcome') }
-  return <><Shell user={user} onLogout={() => void logout()} onOffer={showOffer} onUserUpdated={setUser} />{offer && !paymentReturn && <OfferModal offer={offer} onClose={() => setOffer(null)} onUserUpdated={setUser} />}{paymentReturn && <PaymentReturnModal result={paymentReturn} onClose={closePaymentReturn} onUserUpdated={setUser} />}</>
+  return <><Shell user={user} onLogout={() => void logout()} onOffer={showOffer} onUserUpdated={setUser} />{offer && !paymentReturn && <OfferModal offer={offer} onClose={() => setOffer(null)} onUserUpdated={setUser} />}{paymentReturn && <PaymentReturnModal result={paymentReturn} sessionId={paymentSessionId} onClose={closePaymentReturn} onUserUpdated={setUser} />}</>
 }
