@@ -243,6 +243,7 @@ function Discover({ accessStatus, paidAt, onOffer, onMatch, onProfile }: { acces
   const [profiles, setProfiles] = useState<BackendUser[]>([])
   const [index, setIndex] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [loadedAccessKey, setLoadedAccessKey] = useState('')
   const [error, setError] = useState('')
   const [needsProfile, setNeedsProfile] = useState(false)
   const [paymentRequiredOffer, setPaymentRequiredOffer] = useState<Offer | null>(null)
@@ -250,37 +251,40 @@ function Discover({ accessStatus, paidAt, onOffer, onMatch, onProfile }: { acces
   const [dragging, setDragging] = useState(false)
   const [leaving, setLeaving] = useState(false)
   const pointerStart = useRef<{ x: number; y: number } | null>(null)
+  const accessKey = `${accessStatus}:${paidAt ?? ''}`
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
-    setError('')
-    setNeedsProfile(false)
-    setPaymentRequiredOffer(null)
     apiRequest<{ data: BackendUser[] }>('/api/discover')
       .then((response) => {
         if (cancelled) return
+        setError('')
+        setNeedsProfile(false)
         setProfiles(response.data)
         setIndex(0)
         setPaymentRequiredOffer(null)
+        setLoadedAccessKey(accessKey)
       })
       .catch((caught) => {
         if (cancelled) return
+        setProfiles([])
+        setError('')
+        setNeedsProfile(false)
+        setPaymentRequiredOffer(null)
         if (caught instanceof ApiError && caught.status === 402 && caught.payload.offer) {
-          setProfiles([])
           setPaymentRequiredOffer(caught.payload.offer)
           onOffer(caught.payload.offer)
         }
         else if (caught instanceof ApiError && caught.status === 400 && caught.payload.error === 'PROFILE_INCOMPLETE') {
-          setProfiles([])
           setNeedsProfile(true)
         } else {
           setError('No pudimos cargar perfiles.')
         }
+        setLoadedAccessKey(accessKey)
       })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [accessStatus, paidAt, onOffer])
+  }, [accessKey, onOffer])
 
   const current = profiles[index]
   const next = profiles[index + 1]
@@ -336,7 +340,7 @@ function Discover({ accessStatus, paidAt, onOffer, onMatch, onProfile }: { acces
     }
   }
 
-  if (loading) return <Loading />
+  if (loading || loadedAccessKey !== accessKey) return <Loading />
   return <section className="screen discover-screen">
     <header className="screen-header"><div><span className="eyebrow"><Compass size={14} /> Descubrir</span><h1>Conexiones para ti</h1></div><button className="icon-button" aria-label="Abrir mi perfil" onClick={onProfile}><UserRound size={19} /></button></header>
     {error && <p className="form-error">{error}</p>}
