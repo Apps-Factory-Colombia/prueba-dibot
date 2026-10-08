@@ -1856,6 +1856,10 @@ select {
 /* App-like responsive pass: flexible forms, fixed app chrome, and bounded panels. */
 @media (max-width: 699px) {
   .form-screen:not(.setup-screen) {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
     height: 100vh;
     height: 100svh;
     height: 100dvh;
@@ -1864,15 +1868,17 @@ select {
   }
 
   .form-screen:not(.setup-screen) .auth-hero {
-    height: clamp(190px, 31svh, 300px);
+    flex: 1 1 0;
+    height: auto;
+    min-height: clamp(165px, 25svh, 220px);
   }
 
   .form-screen:not(.setup-screen) .form-card {
-    flex: 1 1 0;
+    flex: 0 0 auto;
     min-height: 0;
     display: grid;
-    grid-template-rows: auto auto minmax(0, 1fr) auto;
-    align-content: stretch;
+    grid-template-rows: auto auto auto auto;
+    align-content: start;
     gap: clamp(9px, 1.6svh, 14px);
     padding: 16px clamp(18px, 5.5vw, 26px) max(14px, env(safe-area-inset-bottom));
   }
@@ -1889,29 +1895,29 @@ select {
 
   .form-screen:not(.setup-screen) .form-stack {
     min-height: 0;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
+    display: grid;
+    align-content: start;
+    justify-content: stretch;
     gap: clamp(8px, 1.4svh, 12px);
     margin: 0;
   }
 
   .form-screen:not(.setup-screen) .form-stack > .field-label {
     min-height: 0;
-    flex: 0 1 auto;
+    flex: none;
     grid-template-rows: auto auto;
   }
 
   .form-screen:not(.setup-screen) .form-stack > .field-label .text-input {
     width: 100%;
-    height: clamp(50px, 10.5svh, 90px);
+    height: clamp(50px, 8svh, 64px);
     min-height: 50px;
   }
 
   .form-screen:not(.setup-screen) .form-stack .button {
-    flex: 0 0 50px;
+    flex: none;
     min-height: 50px;
-    margin: 0;
+    margin: 2px 0 0;
   }
 
   .form-screen:not(.setup-screen) .auth-footnote {
@@ -2052,9 +2058,9 @@ select {
     align-self: center;
     display: flex;
     flex-direction: column;
-    gap: clamp(10px, 1.8svh, 15px);
+    gap: clamp(8px, 1.4svh, 12px);
     margin: auto 0 0;
-    justify-content: space-between;
+    justify-content: flex-start;
   }
 
   .admin-login-card > .field-label {
@@ -2071,7 +2077,7 @@ select {
   .admin-login-card .button {
     flex: 0 0 50px;
     min-height: 50px;
-    margin-top: 0;
+    margin-top: auto;
   }
 
   .admin-overview-panel {
