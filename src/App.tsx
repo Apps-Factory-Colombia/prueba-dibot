@@ -239,7 +239,7 @@ function PaymentReturnModal({ result, sessionId, onClose, onUserUpdated }: { res
 }
 
 
-function Discover({ onOffer, onMatch, onProfile }: { onOffer: (offer: Offer) => void; onMatch: (candidate: BackendUser) => void; onProfile: () => void }) {
+function Discover({ accessStatus, paidAt, onOffer, onMatch, onProfile }: { accessStatus: BackendUser['status']; paidAt: BackendUser['paidAt']; onOffer: (offer: Offer) => void; onMatch: (candidate: BackendUser) => void; onProfile: () => void }) {
   const [profiles, setProfiles] = useState<BackendUser[]>([])
   const [index, setIndex] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -252,18 +252,35 @@ function Discover({ onOffer, onMatch, onProfile }: { onOffer: (offer: Offer) => 
   const pointerStart = useRef<{ x: number; y: number } | null>(null)
 
   useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    setError('')
+    setNeedsProfile(false)
+    setPaymentRequiredOffer(null)
     apiRequest<{ data: BackendUser[] }>('/api/discover')
-      .then((response) => setProfiles(response.data))
+      .then((response) => {
+        if (cancelled) return
+        setProfiles(response.data)
+        setIndex(0)
+        setPaymentRequiredOffer(null)
+      })
       .catch((caught) => {
+        if (cancelled) return
         if (caught instanceof ApiError && caught.status === 402 && caught.payload.offer) {
+          setProfiles([])
           setPaymentRequiredOffer(caught.payload.offer)
           onOffer(caught.payload.offer)
         }
-        else if (caught instanceof ApiError && caught.status === 400 && caught.payload.error === 'PROFILE_INCOMPLETE') setNeedsProfile(true)
-        else setError('No pudimos cargar perfiles.')
+        else if (caught instanceof ApiError && caught.status === 400 && caught.payload.error === 'PROFILE_INCOMPLETE') {
+          setProfiles([])
+          setNeedsProfile(true)
+        } else {
+          setError('No pudimos cargar perfiles.')
+        }
       })
-      .finally(() => setLoading(false))
-  }, [onOffer])
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [accessStatus, paidAt, onOffer])
 
   const current = profiles[index]
   const next = profiles[index + 1]
@@ -467,7 +484,7 @@ function Shell({ user, onLogout, onOffer, onUserUpdated }: { user: BackendUser; 
   const matchOffer = (candidate: BackendUser) => setMatched(candidate)
   const clearChatSelection = () => { setSelected(null); setSupportSelected(false) }
   const goDiscover = () => { setTab('discover'); clearChatSelection() }
-  const content = supportSelected ? <Chats user={user} selected={null} supportSelected onBack={clearChatSelection} onOffer={onOffer} onDiscover={goDiscover} /> : selected ? <Chats user={user} selected={selected} supportSelected={false} onBack={clearChatSelection} onOffer={onOffer} onDiscover={goDiscover} /> : tab === 'discover' ? <Discover onOffer={onOffer} onMatch={matchOffer} onProfile={() => setTab('profile')} /> : tab === 'matches' ? <Matches onOffer={onOffer} onSelect={(match) => { setSelected(match); setSupportSelected(false); setTab('chats') }} onDiscover={goDiscover} /> : tab === 'chats' ? <Chats user={user} selected={null} supportSelected={false} onBack={clearChatSelection} onOffer={onOffer} onSelect={(match) => { setSelected(match); setSupportSelected(false) }} onSupportSelect={() => { setSelected(null); setSupportSelected(true) }} onDiscover={goDiscover} /> : tab === 'gifts' ? <GiftsSection /> : <Profile user={user} onLogout={onLogout} onUserUpdated={onUserUpdated} />
+  const content = supportSelected ? <Chats user={user} selected={null} supportSelected onBack={clearChatSelection} onOffer={onOffer} onDiscover={goDiscover} /> : selected ? <Chats user={user} selected={selected} supportSelected={false} onBack={clearChatSelection} onOffer={onOffer} onDiscover={goDiscover} /> : tab === 'discover' ? <Discover accessStatus={user.status} paidAt={user.paidAt} onOffer={onOffer} onMatch={matchOffer} onProfile={() => setTab('profile')} /> : tab === 'matches' ? <Matches onOffer={onOffer} onSelect={(match) => { setSelected(match); setSupportSelected(false); setTab('chats') }} onDiscover={goDiscover} /> : tab === 'chats' ? <Chats user={user} selected={null} supportSelected={false} onBack={clearChatSelection} onOffer={onOffer} onSelect={(match) => { setSelected(match); setSupportSelected(false) }} onSupportSelect={() => { setSelected(null); setSupportSelected(true) }} onDiscover={goDiscover} /> : tab === 'gifts' ? <GiftsSection /> : <Profile user={user} onLogout={onLogout} onUserUpdated={onUserUpdated} />
   const allNavItems = [{ key: 'discover', label: 'Descubrir', icon: Compass }, { key: 'matches', label: 'Matches', icon: Heart }, { key: 'chats', label: 'Chats', icon: MessageCircle }, { key: 'gifts', label: 'Regalos', icon: Gift }, { key: 'profile', label: 'Perfil', icon: UserRound }] as const
   const navItems = allNavItems.filter(({ key }) => key !== 'gifts' || user.role === 'sugar-baby')
   return <main className="app-shell"><div className="app-content">{content}</div><nav className={user.role === 'sugar-baby' ? 'bottom-nav bottom-nav--gifts' : 'bottom-nav'}>{navItems.map(({ key, label, icon: Icon }) => <button className={tab === key ? 'nav-item is-active' : 'nav-item'} key={key} onClick={() => { setTab(key); clearChatSelection() }}><Icon size={20} fill={key === 'matches' && tab === key ? 'currentColor' : 'none'} /><span>{label}</span></button>)}</nav>{matched && <MatchPopup candidate={matched} onClose={() => setMatched(null)} onChat={() => setMatched(null)} />}</main>
@@ -624,9 +641,9 @@ export default function App() {
     setOffer(null)
     setPaymentReturn(null)
   }
-  const showOffer = (nextOffer: Offer) => {
+  const showOffer = useCallback((nextOffer: Offer) => {
     if (!suppressOfferAfterCheckout.current) setOffer(nextOffer)
-  }
+  }, [])
   if (isAdminPath) return <Admin onExit={() => { window.location.href = '/' }} />
   if (booting) return <main className="boot-screen"><Loading label="Abriendo tu espacio" /></main>
   if (!user && paymentReturn) return <><Welcome onStart={() => setStage('auth')} /><PaymentReturnModal result={paymentReturn} sessionId={paymentSessionId} onClose={closePaymentReturn} onUserUpdated={setUser} /></>

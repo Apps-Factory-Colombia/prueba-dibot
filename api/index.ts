@@ -20,6 +20,13 @@ const imageExtensionTypes: Record<string, string> = {
   svgz: 'image/svg+xml', tif: 'image/tiff', tiff: 'image/tiff', webp: 'image/webp',
 }
 
+function stripeMode(): string {
+  const configuredMode = process.env.STRIPE_MODE?.trim().toLowerCase()
+  // This deployment is being used for test payments only. Never let a live key
+  // create a real charge while NODE_ENV is production.
+  return process.env.NODE_ENV === 'production' ? 'test' : configuredMode || 'test'
+}
+
 function registrationEmailHash(email: string): string {
   const secret = process.env.AUTH_SESSION_SECRET?.trim()
   if (!secret && process.env.NODE_ENV === 'production') throw new Error('Falta AUTH_SESSION_SECRET para proteger el registro pendiente.')
@@ -337,9 +344,9 @@ async function checkout(request: Request) {
   if (isFreeAdultMan(user) || isActive(user)) return json({ data: { active: true, plan: user.plan } })
   const secretKey = process.env.STRIPE_SECRET_KEY?.trim()
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET?.trim()
-  const mode = process.env.STRIPE_MODE?.trim().toLowerCase() || (process.env.NODE_ENV === 'production' ? 'live' : 'test')
+  const mode = stripeMode()
   const expectedPrefix = mode === 'test' ? 'sk_test_' : mode === 'live' ? 'sk_live_' : ''
-  const configuredBaseUrl = process.env.APP_BASE_URL?.trim() || (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:5173')
+  const configuredBaseUrl = process.env.APP_BASE_URL?.trim() || (process.env.NODE_ENV === 'production' ? 'https://sugar-daddy.dibot.co' : 'http://localhost:5173')
   const configurationProblems: string[] = []
   if (!expectedPrefix) configurationProblems.push('STRIPE_MODE debe ser test o live')
   if (!secretKey) configurationProblems.push('STRIPE_SECRET_KEY está vacío')
@@ -420,7 +427,7 @@ async function billingStatus(request: Request) {
 
 function stripeClient(): Stripe {
   const secretKey = process.env.STRIPE_SECRET_KEY?.trim()
-  const mode = process.env.STRIPE_MODE?.trim().toLowerCase() || (process.env.NODE_ENV === 'production' ? 'live' : 'test')
+  const mode = stripeMode()
   const expectedPrefix = mode === 'test' ? 'sk_test_' : mode === 'live' ? 'sk_live_' : ''
   if (!expectedPrefix || !secretKey?.startsWith(expectedPrefix)) throw new Error('Stripe key is not configured for the selected mode.')
   return new Stripe(secretKey)
@@ -445,7 +452,7 @@ async function reconcilePendingCheckout(user: typeof users.$inferSelect, request
   ]
   if (requestedSessionId) filters.push(eq(paymentEvents.externalId, requestedSessionId))
   const attempts = await db.select().from(paymentEvents).where(and(...filters)).orderBy(desc(paymentEvents.createdAt)).limit(requestedSessionId ? 1 : 5)
-  const mode = process.env.STRIPE_MODE?.trim().toLowerCase() || (process.env.NODE_ENV === 'production' ? 'live' : 'test')
+  const mode = stripeMode()
 
   for (const attempt of attempts) {
     if (!attempt.externalId || !/^cs_(test|live)_/.test(attempt.externalId)) continue
@@ -517,7 +524,7 @@ async function stripeWebhook(request: Request) {
   } catch {
     return json({ error: 'Firma de Stripe inválida.' }, { status: 400 })
   }
-  const mode = process.env.STRIPE_MODE?.trim().toLowerCase() || (process.env.NODE_ENV === 'production' ? 'live' : 'test')
+  const mode = stripeMode()
   if (event.livemode !== (mode === 'live')) return json({ error: 'El evento recibido no corresponde al modo de Stripe configurado.' }, { status: 400 })
 
   const supportedEvents = new Set([
