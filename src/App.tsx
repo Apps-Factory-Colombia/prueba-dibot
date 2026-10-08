@@ -54,10 +54,10 @@ function Auth({ onRegister, onLogin }: { onRegister: (credentials: AuthCredentia
   }
   return (
     <main className="form-screen">
-      <header className="simple-header"><Brand compact /><span className="age-pill"><ShieldCheck size={13} /> +18</span></header>
       <section className="auth-hero">
         <img src="/sugar-daddy-auth-daddy.webp" alt="Sugar daddy adulto sonriendo" loading="eager" fetchPriority="high" decoding="async" onError={fallbackImageToPng} />
         <div className="auth-hero__shade" />
+        <header className="simple-header"><Brand compact /><span className="age-pill"><ShieldCheck size={13} /> +18</span></header>
       </section>
       <section className="form-card">
         <div className="segmented">
