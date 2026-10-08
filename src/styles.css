@@ -1852,3 +1852,536 @@ select {
     font-size: .58rem;
   }
 }
+
+/* App-like responsive pass: flexible forms, fixed app chrome, and bounded panels. */
+@media (max-width: 699px) {
+  .form-screen:not(.setup-screen) {
+    height: 100vh;
+    height: 100svh;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .form-screen:not(.setup-screen) .auth-hero {
+    height: clamp(190px, 31svh, 300px);
+  }
+
+  .form-screen:not(.setup-screen) .form-card {
+    flex: 1 1 0;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    align-content: stretch;
+    gap: clamp(9px, 1.6svh, 14px);
+    padding: 16px clamp(18px, 5.5vw, 26px) max(14px, env(safe-area-inset-bottom));
+  }
+
+  .form-screen:not(.setup-screen) .segmented,
+  .form-screen:not(.setup-screen) .form-heading {
+    margin: 0;
+  }
+
+  .form-screen:not(.setup-screen) .form-heading h2 {
+    font-size: clamp(1.45rem, 6.3vw, 1.9rem);
+    line-height: 1.04;
+  }
+
+  .form-screen:not(.setup-screen) .form-stack {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: clamp(8px, 1.4svh, 12px);
+    margin: 0;
+  }
+
+  .form-screen:not(.setup-screen) .form-stack > .field-label {
+    min-height: 0;
+    flex: 0 1 auto;
+    grid-template-rows: auto auto;
+  }
+
+  .form-screen:not(.setup-screen) .form-stack > .field-label .text-input {
+    width: 100%;
+    height: clamp(50px, 10.5svh, 90px);
+    min-height: 50px;
+  }
+
+  .form-screen:not(.setup-screen) .form-stack .button {
+    flex: 0 0 50px;
+    min-height: 50px;
+    margin: 0;
+  }
+
+  .form-screen:not(.setup-screen) .auth-footnote {
+    min-height: 16px;
+    margin: 0;
+    padding: 0;
+  }
+
+  .setup-screen {
+    padding-top: max(12px, env(safe-area-inset-top));
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+  }
+
+  .setup-header .brand img {
+    height: clamp(54px, 9svh, 68px);
+  }
+
+  .setup-progress {
+    margin-top: clamp(7px, 1.5svh, 12px);
+  }
+
+  .setup-flow {
+    gap: 8px;
+    padding: clamp(10px, 2svh, 18px) 0 max(6px, env(safe-area-inset-bottom));
+  }
+
+  .setup-step {
+    gap: clamp(8px, 1.6svh, 12px);
+  }
+
+  .setup-actions {
+    position: sticky;
+    bottom: 0;
+    margin-top: auto;
+    padding: 8px 0 max(4px, env(safe-area-inset-bottom));
+    background: rgba(248, 252, 255, .97);
+    backdrop-filter: blur(10px);
+  }
+
+  .app-shell,
+  .admin-app {
+    height: 100vh;
+    height: 100svh;
+    height: 100dvh;
+    min-height: 0;
+    margin: 0 auto;
+    border-radius: 0;
+  }
+
+  .app-content {
+    min-height: 0;
+    padding: max(14px, env(safe-area-inset-top)) clamp(12px, 4vw, 18px) 14px;
+  }
+
+  .screen {
+    gap: clamp(9px, 1.7svh, 14px);
+  }
+
+  .discover-screen {
+    display: flex;
+    flex-direction: column;
+    align-content: stretch;
+  }
+
+  .discover-screen .swipe-deck,
+  .discover-screen > .discover-empty,
+  .discover-screen > .empty-card {
+    width: 100%;
+    min-height: 0;
+    flex: 1 1 0;
+  }
+
+  .discover-screen .swipe-deck {
+    height: auto;
+  }
+
+  .discover-screen .safe-note {
+    flex: 0 0 auto;
+  }
+
+  .matches-screen {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .matches-screen > .list-card,
+  .matches-screen > .empty-card--rich {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .matches-screen > .empty-card--rich {
+    align-content: center;
+  }
+
+  .chats-screen {
+    grid-template-rows: auto auto minmax(0, 1fr);
+  }
+
+  .chats-screen > .list-card:not(.chat-support-card),
+  .chats-screen > .empty-card--rich {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .admin-app {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    padding-top: max(12px, env(safe-area-inset-top));
+    padding-bottom: max(4px, env(safe-area-inset-bottom));
+    padding-inline: clamp(12px, 4vw, 20px);
+  }
+
+  .admin-app__content,
+  .admin-panel {
+    min-height: 0;
+  }
+
+  .admin-app--login {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding-top: max(12px, env(safe-area-inset-top));
+  }
+
+  .admin-login-brand {
+    flex: 0 0 60px;
+    height: 60px;
+    padding: 0;
+  }
+
+  .admin-login-card {
+    width: min(100%, 430px);
+    min-height: min(390px, calc(100dvh - 100px));
+    max-height: min(560px, calc(100dvh - 100px));
+    flex: 1 1 auto;
+    align-self: center;
+    display: flex;
+    flex-direction: column;
+    gap: clamp(10px, 1.8svh, 15px);
+    margin: auto 0 0;
+    justify-content: space-between;
+  }
+
+  .admin-login-card > .field-label {
+    min-height: 0;
+    flex: 0 1 auto;
+    grid-template-rows: auto auto;
+  }
+
+  .admin-login-card > .field-label .text-input {
+    height: clamp(52px, 9svh, 76px);
+    min-height: 50px;
+  }
+
+  .admin-login-card .button {
+    flex: 0 0 50px;
+    min-height: 50px;
+    margin-top: 0;
+  }
+
+  .admin-overview-panel {
+    grid-template-rows: auto auto minmax(0, 1fr);
+    gap: clamp(8px, 1.5svh, 13px);
+  }
+
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-users-panel {
+    grid-template-rows: auto auto minmax(0, 1fr);
+  }
+
+  .admin-users-panel .admin-list,
+  .admin-support-panel:not(.admin-support-panel--active) .admin-support-list {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .admin-support-panel:not(.admin-support-panel--active) {
+    grid-template-rows: auto auto minmax(0, 1fr);
+  }
+
+  .admin-tabs {
+    min-height: 60px;
+    padding-top: 4px;
+  }
+
+  .admin-tab {
+    min-height: 46px;
+  }
+
+  .edit-profile-actions {
+    position: sticky;
+    bottom: 0;
+    padding: 10px 0 max(8px, env(safe-area-inset-bottom));
+    background: rgba(251, 253, 255, .97);
+    box-shadow: 0 -8px 18px rgba(24, 78, 113, .07);
+  }
+}
+
+@media (max-width: 699px) and (max-height: 700px) {
+  .form-screen:not(.setup-screen) .auth-hero {
+    height: clamp(165px, 28svh, 225px);
+  }
+
+  .form-screen:not(.setup-screen) .form-card {
+    gap: 8px;
+    padding-top: 12px;
+  }
+
+  .form-screen:not(.setup-screen) .form-heading h2 {
+    font-size: clamp(1.35rem, 5.8vw, 1.65rem);
+  }
+
+  .form-screen:not(.setup-screen) .form-stack > .field-label .text-input {
+    height: 48px;
+    min-height: 44px;
+  }
+
+  .form-screen:not(.setup-screen) .form-stack .button {
+    flex-basis: 46px;
+    min-height: 46px;
+  }
+
+  .setup-header .brand img { height: 52px; }
+  .setup-progress { margin-top: 6px; }
+  .setup-flow { padding-top: 8px; }
+  .setup-step { gap: 8px; }
+  .setup-step h1 { font-size: clamp(1.65rem, 7.4vw, 2.25rem); }
+  .setup-step > p { font-size: .8rem; }
+  .setup-step--role .role-choice { min-height: 62px; padding-block: 9px; }
+  .setup-step .text-input { min-height: 44px; }
+  .setup-step .text-area { min-height: 64px; }
+  .setup-step--profile .men-fields { gap: 7px; padding: 10px; }
+  .setup-actions .button,
+  .setup-actions .outline-button { min-height: 46px; }
+
+  .admin-app__content { padding-block: 6px 8px; }
+  .admin-panel { gap: 8px; }
+  .admin-hero { padding: 13px 15px; }
+  .admin-hero h1 { margin-block: 4px; font-size: clamp(1.5rem, 6vw, 1.9rem); }
+  .admin-hero p { font-size: .7rem; line-height: 1.35; }
+  .metric { min-height: 62px; padding: 8px 10px; }
+  .metric b { font-size: 1.15rem; }
+  .admin-quick-card { min-height: 82px; padding: 11px 13px; }
+  .admin-quick-card p { display: none; }
+  .admin-quick-card .outline-button { min-height: 36px; }
+
+  .gifts-screen { gap: 8px; }
+  .gifts-card { gap: 9px; padding: 13px; }
+  .gifts-card__intro { font-size: .73rem; line-height: 1.35; }
+  .gift-tile { min-height: 58px; gap: 4px; }
+  .gifts-steps { gap: 8px; padding: 11px 13px; }
+  .gifts-steps__row { gap: 5px; }
+  .gifts-steps small { font-size: .58rem; }
+
+  .profile-screen { gap: 8px; }
+  .profile-screen .page-title p { display: none; }
+  .profile-account-card { gap: 8px; padding-bottom: 11px; }
+  .profile-account-card__cover { height: 48px; }
+  .profile-account-card .account-head { margin-top: 6px; }
+  .profile-account-card .account-head > img { width: 58px; height: 58px; border-radius: 17px; }
+  .profile-account-card .profile-bio { -webkit-line-clamp: 2; font-size: .78rem; }
+  .profile-account-card .outline-button,
+  .profile-screen .logout-button { min-height: 40px; margin-top: 0; }
+  .profile-highlights { padding-block: 9px; }
+  .profile-screen .security-card { padding: 10px 12px; }
+}
+
+@media (orientation: landscape) and (min-width: 520px) and (max-height: 480px) {
+  .form-screen:not(.setup-screen) {
+    display: grid;
+    grid-template-columns: minmax(150px, .62fr) minmax(0, 1.38fr);
+    grid-template-rows: minmax(0, 1fr);
+    align-items: stretch;
+    justify-content: center;
+    height: 100dvh;
+    min-height: 0;
+    padding: 8px;
+    overflow: hidden;
+  }
+
+  .form-screen:not(.setup-screen) .auth-hero {
+    grid-column: 1;
+    grid-row: 1;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    border-radius: 18px 0 0 18px;
+  }
+
+  .form-screen:not(.setup-screen) .simple-header {
+    top: 8px;
+    left: 8px;
+    width: min(170px, 30vw);
+    padding: 0;
+    transform: none;
+  }
+
+  .form-screen:not(.setup-screen) .simple-header .brand img { width: clamp(90px, 18vw, 118px); }
+  .form-screen:not(.setup-screen) .simple-header .age-pill { display: none; }
+
+  .form-screen:not(.setup-screen) .form-card {
+    grid-column: 2;
+    grid-row: 1;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    margin: 0;
+    gap: 6px;
+    padding: 9px 15px max(8px, env(safe-area-inset-bottom));
+    border-radius: 0 18px 18px 0;
+  }
+
+  .form-screen:not(.setup-screen) .segmented,
+  .form-screen:not(.setup-screen) .segmented button { min-height: 36px; }
+  .form-screen:not(.setup-screen) .form-heading h2 { font-size: clamp(1.1rem, 2.7vw, 1.4rem); }
+  .form-screen:not(.setup-screen) .form-stack { gap: 5px; }
+  .form-screen:not(.setup-screen) .form-stack > .field-label { gap: 3px; font-size: .65rem; }
+  .form-screen:not(.setup-screen) .form-stack > .field-label .text-input { height: clamp(38px, 10svh, 50px); min-height: 38px; padding-inline: 11px; }
+  .form-screen:not(.setup-screen) .form-stack .button { flex-basis: 38px; min-height: 38px; }
+  .form-screen:not(.setup-screen) .auth-footnote { display: none; }
+
+  .app-content { padding-block: max(8px, env(safe-area-inset-top)) 8px; }
+  .discover-screen .swipe-hint,
+  .discover-screen .safe-note { display: none; }
+  .discover-screen .decision { width: 44px; height: 44px; }
+
+  .admin-app { padding-top: max(8px, env(safe-area-inset-top)); padding-bottom: max(2px, env(safe-area-inset-bottom)); }
+  .admin-app__header { min-height: 44px; }
+  .admin-tabs { min-height: 48px; padding-block: 2px; }
+  .admin-tab { min-height: 42px; }
+}
+
+@media (orientation: landscape) and (min-width: 520px) and (max-height: 480px) {
+  .admin-app--login {
+    display: grid;
+    grid-template-columns: minmax(130px, .55fr) minmax(0, 1.45fr);
+    grid-template-rows: minmax(0, 1fr);
+    gap: 10px;
+    padding: 8px;
+  }
+
+  .admin-login-brand { grid-column: 1; align-self: center; padding: 0; }
+  .admin-login-brand .brand img { width: min(100%, 150px); }
+
+  .admin-login-card {
+    grid-column: 2;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    max-height: none;
+    align-self: stretch;
+    gap: 6px;
+    margin: 0;
+    padding: 10px 15px;
+    border-radius: 18px;
+  }
+
+  .admin-login-card h1 { font-size: 1.45rem; }
+  .admin-login-card p { font-size: .68rem; }
+  .admin-login-card .field-label { gap: 3px; font-size: .65rem; }
+  .admin-login-card .text-input { min-height: 38px; }
+  .admin-login-card .button { min-height: 38px; }
+}
+
+@media (min-width: 700px) and (max-height: 700px) {
+  .admin-app { height: 100dvh; min-height: 0; margin-block: 0; border-radius: 0; }
+  .app-shell { height: 100dvh; min-height: 0; margin-block: 0; border-radius: 0; }
+}
+
+@media (min-width: 900px) {
+  .admin-app {
+    width: min(calc(100vw - 64px), 1080px);
+    padding-inline: clamp(24px, 4vw, 48px);
+  }
+
+  .admin-app__content { padding-inline: 8px; }
+  .admin-overview-panel .metric-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .admin-user { min-height: 68px; }
+}
+
+@media (orientation: landscape) and (min-width: 520px) and (max-height: 480px) {
+  .screen { gap: 6px; }
+  .screen-header { min-height: 34px; align-items: center; }
+  .screen-header .eyebrow { font-size: .56rem; }
+  .screen-header h1 { margin-top: 2px; font-size: 1.25rem; }
+  .page-title { gap: 3px; padding: 0; }
+  .page-title h1 { font-size: 1.35rem; }
+  .page-title p { display: none; }
+
+  .discover-screen .swipe-deck { min-height: 120px; }
+  .discover-screen > .discover-empty,
+  .discover-screen > .empty-card { padding: 10px; gap: 6px; }
+  .discover-screen .discover-empty__visual { width: 88px; height: 72px; }
+  .discover-screen .discover-empty__halo { width: 66px; height: 66px; inset: 2px 11px; box-shadow: 0 0 0 7px rgba(220,239,248,.48); }
+  .discover-screen .discover-empty__photo { width: 50px; height: 62px; right: 11px; bottom: 1px; border-width: 2px; border-radius: 14px; }
+  .discover-screen .discover-empty__photo--back { width: 42px; height: 54px; left: 11px; bottom: 6px; }
+  .discover-screen .discover-empty__spark { width: 20px; height: 20px; top: 0; right: 4px; font-size: .8rem; }
+  .discover-screen .discover-empty h2 { font-size: 1rem; }
+  .discover-screen .discover-empty p { font-size: .7rem; }
+  .discover-screen .discover-empty .outline-button,
+  .discover-screen .discover-empty .button { min-height: 36px; }
+  .discover-screen .decision { width: 40px; height: 40px; }
+
+  .matches-screen > .empty-card--rich,
+  .chats-screen > .empty-card--rich { gap: 7px; padding: 10px; }
+  .empty-card--rich .empty-card__icon { width: 42px; height: 42px; }
+  .empty-card--rich h2 { font-size: 1rem; }
+  .empty-card--rich p { font-size: .7rem; }
+  .list-row { min-height: 52px; padding-block: 6px; }
+  .list-row img { width: 38px; height: 38px; border-radius: 12px; }
+
+  .gifts-screen { gap: 6px; }
+  .gifts-card { gap: 7px; padding: 9px 12px; }
+  .gifts-card__heading .gifts-card__icon { width: 32px; height: 32px; }
+  .gifts-card__heading h2 { font-size: 1rem; }
+  .gifts-card__intro,
+  .gifts-card__note { display: none; }
+  .gift-grid { gap: 5px; }
+  .gift-tile { min-height: 44px; gap: 2px; border-radius: 10px; }
+  .gift-tile svg { width: 16px; height: 16px; }
+  .gift-tile span { font-size: .55rem; }
+  .gifts-steps { gap: 5px; padding: 8px 12px; }
+  .gifts-steps__row { gap: 5px; }
+  .gifts-steps small { font-size: .54rem; }
+
+  .profile-screen { gap: 6px; }
+  .profile-screen .profile-account-card { gap: 5px; padding-bottom: 8px; }
+  .profile-screen .profile-account-card__cover { height: 34px; }
+  .profile-screen .account-head { margin-top: 2px; }
+  .profile-screen .account-head > img { width: 44px; height: 44px; border-radius: 13px; }
+  .profile-screen .account-head h2 { font-size: .95rem; }
+  .profile-screen .account-head p { margin-top: 2px; font-size: .65rem; }
+  .profile-screen .account-head .status { margin-top: 3px; padding: 3px 6px; font-size: .55rem; }
+  .profile-screen .profile-account-card .profile-bio,
+  .profile-screen .security-card { display: none; }
+  .profile-screen .profile-account-card .outline-button,
+  .profile-screen .logout-button { min-height: 34px; font-size: .68rem; }
+  .profile-screen .profile-highlights { padding-block: 6px; }
+
+  .admin-app__content { padding-block: 4px; }
+  .admin-overview-panel {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: 6px;
+  }
+  .admin-overview-panel > .admin-hero { grid-column: 1; grid-row: 1; align-self: stretch; padding: 9px 12px; }
+  .admin-overview-panel > .metric-grid { grid-column: 2; grid-row: 1; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+  .admin-overview-panel > .admin-quick-card { grid-column: 1 / -1; grid-row: 2; min-height: 48px; padding: 6px 10px; }
+  .admin-overview-panel .metric { min-height: 0; padding: 5px 7px; }
+  .admin-overview-panel .metric b { font-size: 1rem; }
+  .admin-overview-panel .metric small { font-size: .55rem; }
+  .admin-overview-panel .admin-hero .eyebrow { font-size: .52rem; }
+  .admin-overview-panel .admin-hero h1 { margin-block: 3px; font-size: 1.1rem; }
+  .admin-overview-panel .admin-hero p { display: none; }
+  .admin-overview-panel .admin-quick-card > div { grid-template-columns: auto 1fr; column-gap: 8px; align-items: center; }
+  .admin-overview-panel .admin-quick-card h2 { font-size: .72rem; }
+  .admin-overview-panel .admin-quick-card .eyebrow { font-size: .52rem; }
+  .admin-overview-panel .admin-quick-card .outline-button { width: auto; min-height: 34px; padding-inline: 9px; font-size: .62rem; }
+  .admin-users-panel .admin-user { min-height: 48px; padding-block: 5px; }
+  .admin-users-panel .admin-user__photo,
+  .admin-users-panel .avatar-placeholder { width: 32px; height: 32px; }
+  .admin-support-panel:not(.admin-support-panel--active) > p { font-size: .68rem; }
+  .admin-chat--full .admin-chat-head { min-height: 36px; }
+  .admin-chat--full .composer { min-height: 42px; padding-block: 4px; }
+  .admin-chat--full .composer input,
+  .admin-chat--full .composer .send-button { min-height: 38px; height: 38px; }
+}
